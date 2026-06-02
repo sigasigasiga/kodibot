@@ -1,0 +1,4 @@
+build/
+build-arch/
+tdlib_db/
+run.sh
