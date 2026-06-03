@@ -40,6 +40,7 @@
             pkgs.openssl
             pkgs.zlib
             pkgs.spdlog
+            pkgs.httplib
           ];
 
           shellHook = ''
