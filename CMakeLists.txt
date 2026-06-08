@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
 project(kodibot
   VERSION 0.1.0
@@ -13,7 +13,6 @@ add_subdirectory(third_party/tdlib EXCLUDE_FROM_ALL)
 
 find_package(spdlog REQUIRED)
 find_package(httplib REQUIRED)
+find_package(Boost REQUIRED)
 
-add_executable(kodibot src/main.cpp)
-target_link_libraries(kodibot PRIVATE Td::TdStatic spdlog::spdlog httplib::httplib)
-target_compile_features(kodibot PRIVATE cxx_std_26)
+add_subdirectory(src)

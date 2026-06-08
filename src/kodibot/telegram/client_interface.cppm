@@ -1,0 +1,24 @@
+module;
+
+#include <td/telegram/Client.h>
+#include <td/telegram/td_api.hpp>
+
+export module kodibot.telegram:client_interface;
+
+export namespace kodibot::telegram {
+
+class client_interface
+{
+public:
+    virtual ~client_interface() = default;
+
+public:
+    virtual void on_response(
+        td::ClientManager::RequestId id,
+        td::td_api::object_ptr<td::td_api::Object> object
+    ) = 0;
+
+    virtual void on_update(td::td_api::object_ptr<td::td_api::Object> update) = 0;
+};
+
+} // namespace kodibot::telegram

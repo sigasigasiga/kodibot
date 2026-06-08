@@ -41,6 +41,7 @@
             pkgs.zlib
             pkgs.spdlog
             pkgs.httplib
+            pkgs.boost
           ];
 
           shellHook = ''

@@ -7,66 +7,92 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <functional>
+#include <expected>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
 
+import kodibot.telegram;
+import kodibot.util;
+
 namespace td_api = td::td_api;
+namespace tg = kodibot::telegram;
+namespace util = kodibot::util;
 
 namespace {
 
-template <class... Fs>
-struct overloaded : Fs... {
-    using Fs::operator()...;
-};
+// Set while kodibot_app::run() is executing so the signal handler can request a
+// graceful shutdown. request_stop() on libstdc++/libc++ is lock-free, which is
+// good enough for use from a signal handler here.
+std::stop_source *g_stop_source = nullptr;
 
-template <class... Fs>
-overloaded(Fs...) -> overloaded<Fs...>;
+extern "C" void handle_termination_signal(int /*signum*/) {
+    if (g_stop_source) {
+        g_stop_source->request_stop();
+    }
+}
 
-class kodibot {
+class kodibot_app {
 public:
-    using callback_t = std::move_only_function<void(td_api::object_ptr<td_api::Object>) &&>;
-
-public:
-    kodibot(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port)
-        : m_api_id(api_id)
-        , m_api_hash(std::move(api_hash))
-        , m_bot_token(std::move(bot_token))
-        , m_client_id(m_client_manager.create_client_id())
+    kodibot_app(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port)
+        : m_client(m_client_manager.make_client())
+        , m_bot_auth(m_client, make_tdlib_parameters(api_id, std::move(api_hash)), std::move(bot_token))
         , m_http_port(http_port)
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
-        send_query(td_api::make_object<td_api::getOption>("version"), nullptr);
+        m_update_connection = m_client.subscribe([this](td_api::Object &update) {
+            on_update(update);
+        });
         setup_http_routes();
     }
 
     void run() {
+        g_stop_source = &m_stop_source;
+        std::signal(SIGINT, handle_termination_signal);
+        std::signal(SIGTERM, handle_termination_signal);
+
+        m_bot_auth.start([this](std::expected<void, td_api::error> result) {
+            if (!result) {
+                spdlog::error("Authentication failed: {}", to_string(result.error()));
+                m_stop_source.request_stop();
+            } else {
+                spdlog::info("Bot is online and ready.");
+            }
+        });
+
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server listening on 0.0.0.0:{}", m_http_port);
             if (!m_server.listen("0.0.0.0", m_http_port)) {
                 spdlog::error("HTTP server failed to bind to port {}", m_http_port);
+                m_stop_source.request_stop();
             }
         });
 
-        while (!m_should_exit) {
-            process_response(m_client_manager.receive(10.0));
-        }
+        // Drives the TDLib receive loop and dispatches responses/updates back
+        // to the client (and therefore to our subscribed handlers). Returns once
+        // a shutdown has been requested (signal or auth failure).
+        m_client_manager.run(m_stop_source.get_token());
 
+        spdlog::info("Shutting down...");
         m_server.stop();
         if (m_http_thread.joinable()) {
             m_http_thread.join();
         }
+
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
+        g_stop_source = nullptr;
     }
 
 private:
@@ -77,62 +103,42 @@ private:
         bool supports_streaming{false};
     };
 
-    std::uint64_t next_query_id() { return ++m_current_query_id; }
-
-    void send_query(td_api::object_ptr<td_api::Function> f, callback_t handler) {
-        auto query_id = next_query_id();
-        if (handler) {
-            std::lock_guard lock(m_handlers_mutex);
-            m_handlers.emplace(query_id, std::move(handler));
-        }
-        m_client_manager.send(m_client_id, query_id, std::move(f));
+    static td_api::object_ptr<td_api::setTdlibParameters> make_tdlib_parameters(
+        td_api::int32 api_id, std::string api_hash)
+    {
+        auto request = td_api::make_object<td_api::setTdlibParameters>();
+        request->database_directory_ = "tdlib_db";
+        request->use_message_database_ = true;
+        request->use_secret_chats_ = false;
+        request->api_id_ = api_id;
+        request->api_hash_ = std::move(api_hash);
+        request->system_language_code_ = "en";
+        request->device_model_ = "Server";
+        request->application_version_ = "1.0";
+        return request;
     }
 
+    // Synchronous wrapper around the asynchronous client::send_request, used by
+    // the HTTP worker thread. The callback runs on the client_manager::run()
+    // thread; we block here until it fires.
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
         auto promise = std::make_shared<std::promise<td_api::object_ptr<td_api::Object>>>();
         auto future = promise->get_future();
-        send_query(std::move(f), [promise](td_api::object_ptr<td_api::Object> obj) mutable {
+        m_client.send_request(std::move(f), [promise](td_api::object_ptr<td_api::Object> obj) mutable {
             promise->set_value(std::move(obj));
         });
         return future.get();
     }
 
-    void process_response(td::ClientManager::Response response) {
-        if (!response.object) {
-            return;
-        }
-
-        if (response.request_id == 0) {
-            process_update(std::move(response.object));
-            return;
-        }
-
-        callback_t handler;
-        {
-            std::lock_guard lock(m_handlers_mutex);
-            if (auto node = m_handlers.extract(response.request_id)) {
-                handler = std::move(node.mapped());
-            }
-        }
-        if (handler) {
-            std::invoke(std::move(handler), std::move(response.object));
-        }
-    }
-
-    void process_update(td_api::object_ptr<td_api::Object> update) {
-        td_api::downcast_call(
-            *update,
-            overloaded{
-                [this](td_api::updateAuthorizationState &state) {
-                    on_authorization_state_update(state);
-                },
-                [this](td_api::updateNewMessage &update_new_message) {
-                    on_new_message(*update_new_message.message_);
-                },
-                [](td_api::Object &upd) {
-                    spdlog::trace("unexpected update: {}", upd.get_id());
-                },
-            });
+    void on_update(td_api::Object &update) {
+        td_api::downcast_call(update, util::overload{
+            [this](td_api::updateNewMessage &update_new_message) {
+                on_new_message(*update_new_message.message_);
+            },
+            [](td_api::Object &upd) {
+                spdlog::trace("unhandled update: {}", upd.get_id());
+            },
+        });
     }
 
     void on_new_message(td_api::message &message) {
@@ -140,7 +146,7 @@ private:
             return;
         }
 
-        td_api::downcast_call(*message.content_, overloaded{
+        td_api::downcast_call(*message.content_, util::overload{
             [this](td_api::messageVideo &m) {
                 if (m.video_) {
                     register_video(*m.video_);
@@ -288,80 +294,12 @@ private:
             });
     }
 
-    auto make_auth_handler() {
-        return [this, id = m_authentication_query_id](td_api::object_ptr<td_api::Object> object) {
-            if (id == m_authentication_query_id && object->get_id() == td_api::error::ID) {
-                auto error = td::move_tl_object_as<td_api::error>(object);
-                spdlog::error("Authentication error: {}", to_string(error));
-                m_should_exit = true;
-            }
-        };
-    }
-
-    void on_authorization_state_update(td_api::updateAuthorizationState &auth_state) {
-        ++m_authentication_query_id;
-
-        td_api::downcast_call(
-            *auth_state.authorization_state_,
-            overloaded{
-                [this](td_api::authorizationStateReady &) {
-                    m_is_authorized = true;
-                    spdlog::info("Bot is online and ready to echo messages.");
-                },
-                [this](td_api::authorizationStateLoggingOut &) {
-                    m_is_authorized = false;
-                    spdlog::info("Logging out...");
-                },
-                [](td_api::authorizationStateClosing &) {
-                    spdlog::info("Closing...");
-                },
-                [this](td_api::authorizationStateClosed &) {
-                    m_is_authorized = false;
-                    m_should_exit = true;
-                    spdlog::info("TDLib instance terminated.");
-                },
-                [this](td_api::authorizationStateWaitPhoneNumber &) {
-                    send_query(
-                        td_api::make_object<td_api::checkAuthenticationBotToken>(m_bot_token),
-                        make_auth_handler()
-                    );
-                    spdlog::info("Bot logged in");
-                },
-                [this](td_api::authorizationStateWaitTdlibParameters &) {
-                    auto request = td_api::make_object<td_api::setTdlibParameters>();
-                    request->database_directory_ = "tdlib_db";
-                    request->use_message_database_ = true;
-                    request->use_secret_chats_ = false;
-                    request->api_id_ = m_api_id;
-                    request->api_hash_ = m_api_hash;
-                    request->system_language_code_ = "en";
-                    request->device_model_ = "Server";
-                    request->application_version_ = "1.0";
-                    send_query(std::move(request), make_auth_handler());
-                    spdlog::info("Auth parameters set");
-                },
-                [](td_api::AuthorizationState &upd) {
-                    spdlog::warn("unexpected auth state: {}", upd.get_id());
-                },
-            });
-    }
-
 private:
-    td_api::int32 m_api_id;
-    std::string m_api_hash;
-    std::string m_bot_token;
-
-    td::ClientManager m_client_manager;
-    td::ClientManager::ClientId m_client_id{0};
-
-    bool m_is_authorized{false};
-
-    bool m_should_exit{false};
-    std::atomic<std::uint64_t> m_current_query_id{0};
-    std::uint64_t m_authentication_query_id{0}; // don't know why it's needed but it exists in the official cpp example
-
-    std::mutex m_handlers_mutex;
-    std::map<std::uint64_t, callback_t> m_handlers;
+    tg::client_manager m_client_manager;
+    tg::client &m_client;
+    tg::bot_auth m_bot_auth;
+    util::scoped_connection m_update_connection;
+    std::stop_source m_stop_source;
 
     int m_http_port;
     httplib::Server m_server;
@@ -416,7 +354,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    kodibot bot(api_id, std::move(api_hash), std::move(token), http_port);
+    kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port);
     bot.run();
     return 0;
 }
