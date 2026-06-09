@@ -10,8 +10,8 @@ target_sources(
 
     bot_auth.cppm
     client.cppm
-    client_interface.cppm
     client_manager.cppm
+    receiver.cppm
 
     module.cppm
 )

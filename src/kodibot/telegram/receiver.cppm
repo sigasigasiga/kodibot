@@ -3,14 +3,14 @@ module;
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
 
-export module kodibot.telegram:client_interface;
+export module kodibot.telegram:receiver;
 
 export namespace kodibot::telegram {
 
-class client_interface
+class receiver
 {
 public:
-    virtual ~client_interface() = default;
+    virtual ~receiver() = default;
 
 public:
     virtual void on_response(

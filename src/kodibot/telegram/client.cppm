@@ -9,13 +9,13 @@ module;
 
 export module kodibot.telegram:client;
 
-export import :client_interface;
+export import :receiver;
 
 import kodibot.util;
 
 export namespace kodibot::telegram {
 
-class client : public client_interface
+class client : public receiver
 {
 public:
     using callback_type = std::move_only_function<void(td::td_api::object_ptr<td::td_api::Object>) &&>;
@@ -42,7 +42,7 @@ public:
     void send_request(td::td_api::object_ptr<td::td_api::Function> f, callback_type cb);
     util::scoped_connection subscribe(signal_type::slot_function_type callback);
 
-private: // client_interface
+private: // receiver
     void on_response(
         td::ClientManager::RequestId id,
         td::td_api::object_ptr<td::td_api::Object> object
@@ -88,7 +88,7 @@ util::scoped_connection client::subscribe(signal_type::slot_function_type callba
     return m_update_signal.connect(std::move(callback));
 }
 
-// client_interface
+// receiver
 void client::on_response(
     td::ClientManager::RequestId id,
     td::td_api::object_ptr<td::td_api::Object> object

@@ -32,7 +32,7 @@ private: // client::delegate
 private:
     td::ClientManager m_client_manager;
 
-    std::map<td::ClientManager::ClientId, std::unique_ptr<client_interface>> m_clients;
+    std::map<td::ClientManager::ClientId, std::unique_ptr<receiver>> m_clients;
 };
 
 client &client_manager::make_client() {
