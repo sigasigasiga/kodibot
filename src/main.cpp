@@ -9,10 +9,10 @@
 #include <array>
 #include <csignal>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <expected>
+#include <fstream>
 #include <future>
 #include <map>
 #include <memory>
@@ -233,22 +233,28 @@ private:
                     return false;
                 }
 
-                auto rd_req = td_api::make_object<td_api::readFilePart>();
-                rd_req->file_id_ = info.file_id;
-                rd_req->offset_ = static_cast<td_api::int53>(offset);
-                rd_req->count_ = to_fetch;
-                auto rd_result = send_query_sync(std::move(rd_req));
-                if (!rd_result || rd_result->get_id() != td_api::data::ID) {
-                    spdlog::warn("readFilePart failed for file_id={} at offset={}",
+                auto file = td::move_tl_object_as<td_api::file>(dl_result);
+                if (!file->local_ || file->local_->path_.empty()) {
+                    spdlog::warn("no local path for file_id={} at offset={}",
                                  info.file_id, offset);
                     return false;
                 }
 
-                auto part = td::move_tl_object_as<td_api::data>(rd_result);
-                if (part->data_.empty()) {
+                std::ifstream in(file->local_->path_, std::ios::binary);
+                if (!in) {
+                    spdlog::warn("failed to open {} for file_id={}",
+                                 file->local_->path_, info.file_id);
                     return false;
                 }
-                return sink.write(part->data_.data(), part->data_.size());
+                in.seekg(static_cast<std::streamoff>(offset));
+
+                std::array<char, kChunkSize> buf{};
+                in.read(buf.data(), to_fetch);
+                const auto n = in.gcount();
+                if (n <= 0) {
+                    return false;
+                }
+                return sink.write(buf.data(), static_cast<size_t>(n));
             });
     }
 
@@ -270,10 +276,8 @@ private:
             return;
         }
 
-        std::shared_ptr<std::FILE> fp(
-            std::fopen(file->local_->path_.c_str(), "rb"),
-            [](std::FILE *f) { if (f) std::fclose(f); });
-        if (!fp) {
+        auto in = std::make_shared<std::ifstream>(file->local_->path_, std::ios::binary);
+        if (!*in) {
             res.status = 500;
             return;
         }
@@ -281,13 +285,14 @@ private:
         res.set_header("Accept-Ranges", "none");
         res.set_chunked_content_provider(
             info.mime_type,
-            [fp](size_t /*offset*/, httplib::DataSink &sink) -> bool {
+            [in](size_t /*offset*/, httplib::DataSink &sink) -> bool {
                 std::array<char, 64 * 1024> buf{};
-                auto n = std::fread(buf.data(), 1, buf.size(), fp.get());
-                if (n > 0 && !sink.write(buf.data(), n)) {
+                in->read(buf.data(), buf.size());
+                const auto n = in->gcount();
+                if (n > 0 && !sink.write(buf.data(), static_cast<size_t>(n))) {
                     return false;
                 }
-                if (n < buf.size()) {
+                if (n < static_cast<std::streamsize>(buf.size())) {
                     sink.done();
                 }
                 return true;
