@@ -18,6 +18,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -45,10 +47,12 @@ extern "C" void handle_termination_signal(int /*signum*/) {
 
 class kodibot_app {
 public:
-    kodibot_app(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port)
+    kodibot_app(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port,
+                std::set<std::int64_t> user_whitelist)
         : m_client(m_client_manager.make_client())
         , m_bot_auth(m_client, make_tdlib_parameters(api_id, std::move(api_hash)), std::move(bot_token))
         , m_http_port(http_port)
+        , m_user_whitelist(std::move(user_whitelist))
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
         m_update_connection = m_client.subscribe([this](td_api::Object &update) {
@@ -146,6 +150,10 @@ private:
             return;
         }
 
+        if (!is_sender_allowed(message)) {
+            return;
+        }
+
         td_api::downcast_call(*message.content_, util::overload{
             [this](td_api::messageVideo &m) {
                 if (m.video_) {
@@ -156,6 +164,29 @@ private:
                 spdlog::trace("Got message content {}, ignoring...", m.get_id());
             },
         });
+    }
+
+    // Returns true if the message may be processed. Only messages sent by a
+    // whitelisted user are accepted; an empty whitelist allows no one. Messages
+    // sent on behalf of a chat (rather than a user) are never allowed.
+    bool is_sender_allowed(const td_api::message &message) const {
+        std::int64_t sender_user_id = 0;
+        if (message.sender_id_) {
+            td_api::downcast_call(
+                const_cast<td_api::MessageSender &>(*message.sender_id_), util::overload{
+                    [&](const td_api::messageSenderUser &s) { sender_user_id = s.user_id_; },
+                    [](const td_api::MessageSender &) {},
+                });
+        }
+
+        if (sender_user_id != 0 && m_user_whitelist.contains(sender_user_id)) {
+            return true;
+        }
+
+        spdlog::warn(
+            "Dropping message from non-whitelisted sender (user_id={}, chat_id={})",
+            sender_user_id, message.chat_id_);
+        return false;
     }
 
     void register_video(const td_api::video &video) {
@@ -312,7 +343,32 @@ private:
 
     std::mutex m_videos_mutex;
     std::map<td_api::int32, video_info> m_videos;
+
+    std::set<std::int64_t> m_user_whitelist;
 };
+
+// Parses a comma-separated list of Telegram user IDs (e.g. "123,456,789") into
+// a set. Whitespace around entries is ignored; invalid entries are skipped with
+// a warning.
+std::set<std::int64_t> parse_user_whitelist(const std::string &spec) {
+    std::set<std::int64_t> whitelist;
+    std::stringstream stream(spec);
+    std::string entry;
+    while (std::getline(stream, entry, ',')) {
+        const auto begin = entry.find_first_not_of(" \t");
+        if (begin == std::string::npos) {
+            continue;  // empty / whitespace-only entry
+        }
+        const auto end = entry.find_last_not_of(" \t");
+        const auto trimmed = entry.substr(begin, end - begin + 1);
+        try {
+            whitelist.insert(std::stoll(trimmed));
+        } catch (const std::exception &e) {
+            spdlog::warn("Ignoring invalid whitelist user id '{}': {}", trimmed, e.what());
+        }
+    }
+    return whitelist;
+}
 
 }  // namespace
 
@@ -332,14 +388,26 @@ int main(int argc, char **argv) {
     std::string api_id_str = arg_or_env(1, "TELEGRAM_API_ID");
     std::string api_hash = arg_or_env(2, "TELEGRAM_API_HASH");
     std::string token = arg_or_env(3, "TELEGRAM_BOT_TOKEN");
+    std::string whitelist_str = arg_or_env(4, "TELEGRAM_USER_WHITELIST");
 
     if (api_id_str.empty() || api_hash.empty() || token.empty()) {
         spdlog::error(
-            "Usage: {} <api_id> <api_hash> <bot_token>\n"
-            "Or set the TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_BOT_TOKEN "
-            "environment variables.",
+            "Usage: {} <api_id> <api_hash> <bot_token> [user_whitelist]\n"
+            "Or set the TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, and "
+            "TELEGRAM_USER_WHITELIST environment variables.\n"
+            "user_whitelist is a comma-separated list of allowed Telegram user IDs, "
+            "e.g. \"123456789,987654321\".",
             argc > 0 ? argv[0] : "kodibot");
         return 1;
+    }
+
+    std::set<std::int64_t> user_whitelist = parse_user_whitelist(whitelist_str);
+    if (user_whitelist.empty()) {
+        spdlog::warn(
+            "User whitelist is empty; no incoming messages will be processed. "
+            "Pass a comma-separated list of allowed user IDs to enable the bot.");
+    } else {
+        spdlog::info("Loaded user whitelist with {} entries.", user_whitelist.size());
     }
 
     td_api::int32 api_id = 0;
@@ -359,7 +427,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port);
+    kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port,
+                    std::move(user_whitelist));
     bot.run();
     return 0;
 }
