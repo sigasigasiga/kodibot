@@ -10,6 +10,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <expected>
 #include <fstream>
@@ -147,6 +148,16 @@ private:
 
     void on_new_message(td_api::message &message) {
         if (message.is_outgoing_) {
+            return;
+        }
+
+        // Drop messages that were sent before the bot started. When the bot comes
+        // online, TDLib replays every message received while it was offline as an
+        // updateNewMessage; we only ever want to act on messages sent live.
+        if (message.date_ < m_start_time) {
+            spdlog::debug(
+                "Dropping message sent while offline (date={}, started={})",
+                message.date_, m_start_time);
             return;
         }
 
@@ -336,6 +347,9 @@ private:
     tg::bot_auth m_bot_auth;
     util::scoped_connection m_update_connection;
     std::stop_source m_stop_source;
+
+    // Unix time at which the bot started; messages older than this are dropped.
+    td_api::int32 m_start_time{static_cast<td_api::int32>(std::time(nullptr))};
 
     int m_http_port;
     httplib::Server m_server;
