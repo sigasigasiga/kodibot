@@ -13,6 +13,7 @@
 #include <ctime>
 #include <exception>
 #include <expected>
+#include <format>
 #include <fstream>
 #include <future>
 #include <map>
@@ -26,10 +27,14 @@
 #include <thread>
 #include <utility>
 
+#include <unistd.h>
+
+import kodibot.kodi;
 import kodibot.telegram;
 import kodibot.util;
 
 namespace td_api = td::td_api;
+namespace kodi = kodibot::kodi;
 namespace tg = kodibot::telegram;
 namespace util = kodibot::util;
 
@@ -49,11 +54,15 @@ extern "C" void handle_termination_signal(int /*signum*/) {
 class kodibot_app {
 public:
     kodibot_app(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port,
-                std::set<std::int64_t> user_whitelist)
+                std::set<std::int64_t> user_whitelist, kodi::connection kodi_conn,
+                std::string public_host)
         : m_client(m_client_manager.make_client())
         , m_bot_auth(m_client, make_tdlib_parameters(api_id, std::move(api_hash)), std::move(bot_token))
         , m_http_port(http_port)
         , m_user_whitelist(std::move(user_whitelist))
+        , m_kodi_enabled(!kodi_conn.host.empty())
+        , m_kodi(std::move(kodi_conn))
+        , m_public_host(std::move(public_host))
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
         m_update_connection = m_client.subscribe([this](td_api::Object &update) {
@@ -222,6 +231,27 @@ private:
         spdlog::info(
             "Registered video at /videos/{} (size={}, mime={}, streaming={})",
             file_id, size, info.mime_type, info.supports_streaming);
+
+        play_on_kodi(file_id);
+    }
+
+    // Tells Kodi to start playing the just-registered video. The request runs on
+    // a detached thread: this method is called from the client_manager::run()
+    // receive loop, but Player.Open can block until Kodi opens the stream, which
+    // it does by fetching from our HTTP server thread, which in turn relies on
+    // the receive loop to fulfil downloadFile. Blocking here would deadlock.
+    void play_on_kodi(td_api::int32 file_id) {
+        if (!m_kodi_enabled) {
+            return;
+        }
+        const std::string url = std::format(
+            "http://{}:{}/videos/{}", m_public_host, m_http_port, file_id);
+        std::thread([this, url] {
+            spdlog::info("Asking Kodi to play {}", url);
+            if (auto result = m_kodi.play(url); !result) {
+                spdlog::error("Kodi playback failed: {}", result.error());
+            }
+        }).detach();
     }
 
     void setup_http_routes() {
@@ -359,6 +389,10 @@ private:
     std::map<td_api::int32, video_info> m_videos;
 
     std::set<std::int64_t> m_user_whitelist;
+
+    bool m_kodi_enabled;
+    kodi::client m_kodi;
+    std::string m_public_host;
 };
 
 // Parses a comma-separated list of Telegram user IDs (e.g. "123,456,789") into
@@ -403,14 +437,25 @@ int main(int argc, char **argv) {
     std::string api_hash = arg_or_env(2, "TELEGRAM_API_HASH");
     std::string token = arg_or_env(3, "TELEGRAM_BOT_TOKEN");
     std::string whitelist_str = arg_or_env(4, "TELEGRAM_USER_WHITELIST");
+    std::string kodi_host = arg_or_env(5, "KODI_HOST");
+    std::string kodi_port_str = arg_or_env(6, "KODI_PORT");
+    std::string kodi_username = arg_or_env(7, "KODI_USERNAME");
+    std::string kodi_password = arg_or_env(8, "KODI_PASSWORD");
+    std::string public_host = arg_or_env(9, "KODIBOT_PUBLIC_HOST");
 
     if (api_id_str.empty() || api_hash.empty() || token.empty()) {
         spdlog::error(
-            "Usage: {} <api_id> <api_hash> <bot_token> [user_whitelist]\n"
-            "Or set the TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, and "
-            "TELEGRAM_USER_WHITELIST environment variables.\n"
+            "Usage: {} <api_id> <api_hash> <bot_token> [user_whitelist] "
+            "[kodi_host] [kodi_port] [kodi_username] [kodi_password] [public_host]\n"
+            "Or set the TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, "
+            "TELEGRAM_USER_WHITELIST, KODI_HOST, KODI_PORT, KODI_USERNAME, "
+            "KODI_PASSWORD, and KODIBOT_PUBLIC_HOST environment variables.\n"
             "user_whitelist is a comma-separated list of allowed Telegram user IDs, "
-            "e.g. \"123456789,987654321\".",
+            "e.g. \"123456789,987654321\".\n"
+            "kodi_host enables playback: received videos are sent to the Kodi "
+            "JSON-RPC interface at kodi_host:kodi_port (default port 8080). "
+            "public_host is the address Kodi uses to reach this bot's HTTP server "
+            "(defaults to the local hostname).",
             argc > 0 ? argv[0] : "kodibot");
         return 1;
     }
@@ -432,7 +477,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    int http_port = 8080;
+    int http_port = 9988;
     if (const char *p = std::getenv("KODIBOT_HTTP_PORT")) {
         try {
             http_port = std::stoi(p);
@@ -441,8 +486,42 @@ int main(int argc, char **argv) {
         }
     }
 
+    kodi::connection kodi_conn;
+    kodi_conn.host = kodi_host;
+    kodi_conn.port = 8080;
+    if (!kodi_port_str.empty()) {
+        try {
+            kodi_conn.port = std::stoi(kodi_port_str);
+        } catch (...) {
+            spdlog::warn("Invalid KODI_PORT='{}', falling back to {}", kodi_port_str, kodi_conn.port);
+        }
+    }
+    kodi_conn.username = std::move(kodi_username);
+    kodi_conn.password = std::move(kodi_password);
+
+    if (kodi_conn.host.empty()) {
+        spdlog::warn(
+            "KODI_HOST is not set; Kodi playback is disabled. Videos will still be "
+            "served over HTTP. Pass a Kodi host to enable playback.");
+    } else {
+        if (public_host.empty()) {
+            std::array<char, 256> hostname{};
+            if (gethostname(hostname.data(), hostname.size() - 1) == 0) {
+                public_host = hostname.data();
+            }
+            if (public_host.empty()) {
+                public_host = "localhost";
+            }
+            spdlog::warn(
+                "KODIBOT_PUBLIC_HOST is not set; defaulting to '{}'. Kodi must be "
+                "able to reach this bot's HTTP server at that address.",
+                public_host);
+        }
+        spdlog::info("Kodi playback enabled (target {}:{}).", kodi_conn.host, kodi_conn.port);
+    }
+
     kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port,
-                    std::move(user_whitelist));
+                    std::move(user_whitelist), std::move(kodi_conn), std::move(public_host));
     bot.run();
     return 0;
 }

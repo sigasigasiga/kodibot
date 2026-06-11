@@ -12,6 +12,7 @@ target_link_libraries(
     httplib::httplib
     Boost::headers
 
+    kodibot.kodi
     kodibot.telegram
     kodibot.util
 )
