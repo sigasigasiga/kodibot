@@ -10,9 +10,11 @@
 #include <array>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <exception>
 #include <expected>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <future>
@@ -395,6 +397,44 @@ private:
     std::string m_public_host;
 };
 
+// Name of the credentials file looked up inside $CREDENTIALS_DIRECTORY. With
+// systemd this is the credential id, e.g. configured via
+// `LoadCredential=kodibot.conf:/etc/kodibot.conf` in the unit file.
+constexpr const char *kCredentialsFileName = "kodibot.conf";
+
+// Loads options from the systemd credentials store, if available. systemd
+// exposes credentials as files inside the directory named by
+// $CREDENTIALS_DIRECTORY; we parse kCredentialsFileName there as a
+// program_options config file (one `key = value` per line, using the same
+// long option names as the command line).
+//
+// Values already present in `vm` (i.e. those passed on the command line) take
+// precedence: program_options keeps the first stored, non-default value for
+// each option, so this must be called after the command line has been stored.
+void load_systemd_credentials(const boost::program_options::options_description &options,
+                              boost::program_options::variables_map &vm) {
+    namespace po = boost::program_options;
+
+    const char *creds_dir = std::getenv("CREDENTIALS_DIRECTORY");
+    if (!creds_dir || *creds_dir == '\0') {
+        return;
+    }
+
+    const std::filesystem::path config_path =
+        std::filesystem::path(creds_dir) / kCredentialsFileName;
+    std::ifstream config_file(config_path);
+    if (!config_file) {
+        spdlog::warn(
+            "CREDENTIALS_DIRECTORY is set but '{}' could not be opened; "
+            "relying on command-line options only.",
+            config_path.string());
+        return;
+    }
+
+    spdlog::info("Loading configuration from systemd credential '{}'.", config_path.string());
+    po::store(po::parse_config_file(config_file, options), vm);
+}
+
 // Parses a comma-separated list of Telegram user IDs (e.g. "123,456,789") into
 // a set. Whitespace around entries is ignored; invalid entries are skipped with
 // a warning.
@@ -465,6 +505,9 @@ int main(int argc, char **argv) {
 
     po::variables_map vm;
     try {
+        // Store the command line first so it takes precedence over the
+        // credentials file: program_options keeps the first stored value for
+        // each option.
         po::store(po::parse_command_line(argc, argv, options), vm);
         if (vm.count("help")) {
             std::ostringstream usage;
@@ -473,6 +516,7 @@ int main(int argc, char **argv) {
                          argc > 0 ? argv[0] : "kodibot", usage.str());
             return 0;
         }
+        load_systemd_credentials(options, vm);
         po::notify(vm);
     } catch (const po::error &e) {
         spdlog::error("{}", e.what());
