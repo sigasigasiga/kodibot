@@ -2,6 +2,7 @@
 #include <td/telegram/td_api.h>
 #include <td/telegram/td_api.hpp>
 
+#include <boost/program_options.hpp>
 #include <httplib.h>
 #include <spdlog/spdlog.h>
 
@@ -9,7 +10,6 @@
 #include <array>
 #include <csignal>
 #include <cstdint>
-#include <cstdlib>
 #include <ctime>
 #include <exception>
 #include <expected>
@@ -423,40 +423,63 @@ std::set<std::int64_t> parse_user_whitelist(const std::string &spec) {
 int main(int argc, char **argv) {
     spdlog::set_level(spdlog::level::debug);
 
-    auto arg_or_env = [&](int index, const char *env_name) -> std::string {
-        if (argc > index) {
-            return argv[index];
-        }
-        if (const char *env = std::getenv(env_name)) {
-            return env;
-        }
-        return {};
-    };
+    namespace po = boost::program_options;
 
-    std::string api_id_str = arg_or_env(1, "TELEGRAM_API_ID");
-    std::string api_hash = arg_or_env(2, "TELEGRAM_API_HASH");
-    std::string token = arg_or_env(3, "TELEGRAM_BOT_TOKEN");
-    std::string whitelist_str = arg_or_env(4, "TELEGRAM_USER_WHITELIST");
-    std::string kodi_host = arg_or_env(5, "KODI_HOST");
-    std::string kodi_port_str = arg_or_env(6, "KODI_PORT");
-    std::string kodi_username = arg_or_env(7, "KODI_USERNAME");
-    std::string kodi_password = arg_or_env(8, "KODI_PASSWORD");
-    std::string public_host = arg_or_env(9, "KODIBOT_PUBLIC_HOST");
+    td_api::int32 api_id = 0;
+    std::string api_hash;
+    std::string token;
+    std::string whitelist_str;
+    int http_port = 9988;
+    std::string kodi_host;
+    int kodi_port = 8080;
+    std::string kodi_username;
+    std::string kodi_password;
+    std::string public_host;
 
-    if (api_id_str.empty() || api_hash.empty() || token.empty()) {
-        spdlog::error(
-            "Usage: {} <api_id> <api_hash> <bot_token> [user_whitelist] "
-            "[kodi_host] [kodi_port] [kodi_username] [kodi_password] [public_host]\n"
-            "Or set the TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, "
-            "TELEGRAM_USER_WHITELIST, KODI_HOST, KODI_PORT, KODI_USERNAME, "
-            "KODI_PASSWORD, and KODIBOT_PUBLIC_HOST environment variables.\n"
-            "user_whitelist is a comma-separated list of allowed Telegram user IDs, "
-            "e.g. \"123456789,987654321\".\n"
-            "kodi_host enables playback: received videos are sent to the Kodi "
-            "JSON-RPC interface at kodi_host:kodi_port (default port 8080). "
-            "public_host is the address Kodi uses to reach this bot's HTTP server "
-            "(defaults to the local hostname).",
-            argc > 0 ? argv[0] : "kodibot");
+    po::options_description options("Options");
+    options.add_options()
+        ("help,h", "Show this help message and exit.")
+        ("telegram-api-id", po::value<td_api::int32>(&api_id)->required(),
+         "Telegram API id.")
+        ("telegram-api-hash", po::value<std::string>(&api_hash)->required(),
+         "Telegram API hash.")
+        ("telegram-bot-token", po::value<std::string>(&token)->required(),
+         "Telegram bot token.")
+        ("telegram-user-whitelist", po::value<std::string>(&whitelist_str),
+         "Comma-separated list of allowed Telegram user IDs, "
+         "e.g. \"123456789,987654321\".")
+        ("http-port", po::value<int>(&http_port)->default_value(http_port),
+         "Port the bot's HTTP server listens on.")
+        ("kodi-host", po::value<std::string>(&kodi_host),
+         "Kodi host. Enables playback: received videos are sent to the Kodi "
+         "JSON-RPC interface at kodi-host:kodi-port.")
+        ("kodi-port", po::value<int>(&kodi_port)->default_value(kodi_port),
+         "Kodi JSON-RPC port.")
+        ("kodi-username", po::value<std::string>(&kodi_username),
+         "Kodi JSON-RPC username.")
+        ("kodi-password", po::value<std::string>(&kodi_password),
+         "Kodi JSON-RPC password.")
+        ("public-host", po::value<std::string>(&public_host),
+         "Address Kodi uses to reach this bot's HTTP server "
+         "(defaults to the local hostname).");
+
+    po::variables_map vm;
+    try {
+        po::store(po::parse_command_line(argc, argv, options), vm);
+        if (vm.count("help")) {
+            std::ostringstream usage;
+            usage << options;
+            spdlog::info("Usage: {} [options]\n{}",
+                         argc > 0 ? argv[0] : "kodibot", usage.str());
+            return 0;
+        }
+        po::notify(vm);
+    } catch (const po::error &e) {
+        spdlog::error("{}", e.what());
+        std::ostringstream usage;
+        usage << options;
+        spdlog::error("Usage: {} [options]\n{}",
+                      argc > 0 ? argv[0] : "kodibot", usage.str());
         return 1;
     }
 
@@ -469,33 +492,9 @@ int main(int argc, char **argv) {
         spdlog::info("Loaded user whitelist with {} entries.", user_whitelist.size());
     }
 
-    td_api::int32 api_id = 0;
-    try {
-        api_id = std::stoi(api_id_str);
-    } catch (const std::exception &e) {
-        spdlog::error("Invalid api_id '{}': {}", api_id_str, e.what());
-        return 1;
-    }
-
-    int http_port = 9988;
-    if (const char *p = std::getenv("KODIBOT_HTTP_PORT")) {
-        try {
-            http_port = std::stoi(p);
-        } catch (...) {
-            spdlog::warn("Invalid KODIBOT_HTTP_PORT='{}', falling back to {}", p, http_port);
-        }
-    }
-
     kodi::connection kodi_conn;
     kodi_conn.host = kodi_host;
-    kodi_conn.port = 8080;
-    if (!kodi_port_str.empty()) {
-        try {
-            kodi_conn.port = std::stoi(kodi_port_str);
-        } catch (...) {
-            spdlog::warn("Invalid KODI_PORT='{}', falling back to {}", kodi_port_str, kodi_conn.port);
-        }
-    }
+    kodi_conn.port = kodi_port;
     kodi_conn.username = std::move(kodi_username);
     kodi_conn.password = std::move(kodi_password);
 

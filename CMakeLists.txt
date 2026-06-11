@@ -13,6 +13,6 @@ add_subdirectory(third_party/tdlib EXCLUDE_FROM_ALL)
 
 find_package(spdlog REQUIRED)
 find_package(httplib REQUIRED)
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS program_options)
 
 add_subdirectory(src)

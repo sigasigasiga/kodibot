@@ -11,6 +11,7 @@ target_link_libraries(
     spdlog::spdlog
     httplib::httplib
     Boost::headers
+    Boost::program_options
 
     kodibot.kodi
     kodibot.telegram
