@@ -18,7 +18,7 @@ endblock()
 
 add_subdirectory(third_party/cpp-httplib EXCLUDE_FROM_ALL)
 
-find_package(spdlog REQUIRED)
-find_package(Boost REQUIRED COMPONENTS program_options)
+find_package(spdlog CONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED COMPONENTS program_options)
 
 add_subdirectory(src)
