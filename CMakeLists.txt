@@ -8,8 +8,11 @@ project(kodibot
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# TDLib is vendored as a git submodule under third_party/tdlib.
-add_subdirectory(third_party/tdlib EXCLUDE_FROM_ALL)
+block(SCOPE_FOR VARIABLES)
+    # I don't get why they didn't specify C++ standard in thier own `CMakeLists.txt`
+    set(CMAKE_CXX_STANDARD 17)
+    add_subdirectory(third_party/tdlib EXCLUDE_FROM_ALL)
+endblock()
 
 add_subdirectory(third_party/cpp-httplib EXCLUDE_FROM_ALL)
 
