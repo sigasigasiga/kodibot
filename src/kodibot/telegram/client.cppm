@@ -40,7 +40,24 @@ public:
 
 public:
     void send_request(td::td_api::object_ptr<td::td_api::Function> f, callback_type cb);
+
     util::scoped_connection subscribe(signal_type::slot_function_type callback);
+
+    template<std::invocable<> F>
+    void post(F &&f) {
+        // TDLib documentation says:
+        // > Does nothing; for testing only. This is an offline method.
+        // > Can be called before authorization.
+        //
+        // IDGAF.
+        //
+        // If one day it stops working, change it to one of
+        // `td_api::setAlarm`/`td_api::getCurrentState`/`td_api::getAuthorizationState`/...
+        send_request(
+            td::td_api::make_object<td::td_api::testCallEmpty>(),
+            std::bind(std::forward<F>(f))
+        );
+    }
 
 private: // receiver
     void on_response(
