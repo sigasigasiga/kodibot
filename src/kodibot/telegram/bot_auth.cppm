@@ -15,7 +15,8 @@ export namespace kodibot::telegram {
 class bot_auth
 {
 public:
-    using callback_type = std::move_only_function<void(std::expected<void, td::td_api::error>) &&>;
+    using result_type = std::expected<void, td::td_api::error>;
+    using callback_type = std::move_only_function<void(result_type) &&>;
 
 public:
     bot_auth(
@@ -79,7 +80,7 @@ void bot_auth::on_update(td::td_api::Object &update) {
         *auth_state.authorization_state_,
         util::overload{
             [this](td::td_api::authorizationStateReady &) {
-                std::move(m_callback)({});
+                m_client.post(std::bind_front(std::move(m_callback), result_type()));
                 spdlog::info("Bot is online and ready to echo messages.");
             },
             [this](td::td_api::authorizationStateLoggingOut &) {
