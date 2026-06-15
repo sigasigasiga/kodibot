@@ -17,6 +17,7 @@ block(SCOPE_FOR VARIABLES)
 endblock()
 
 add_subdirectory(third_party/cpp-httplib EXCLUDE_FROM_ALL)
+add_subdirectory(third_party/grace EXCLUDE_FROM_ALL)
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS program_options)

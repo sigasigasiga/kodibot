@@ -11,6 +11,8 @@ export module kodibot.telegram:client;
 
 export import :receiver;
 
+import grace;
+
 import kodibot.util;
 
 export namespace kodibot::telegram {
@@ -55,7 +57,7 @@ public:
         // `td_api::setAlarm`/`td_api::getCurrentState`/`td_api::getAuthorizationState`/...
         send_request(
             td::td_api::make_object<td::td_api::testCallEmpty>(),
-            std::bind(std::forward<F>(f))
+            grace::fn::wrap::args::ignore(std::forward<F>(f))
         );
     }
 
