@@ -15,8 +15,7 @@ export namespace kodibot::telegram {
 class bot_auth
 {
 public:
-    using result_type = std::expected<void, td::td_api::error>;
-    using callback_type = std::move_only_function<void(result_type) &&>;
+    using callback_type = std::move_only_function<void(client &, td::td_api::object_ptr<td::td_api::error>) &&>;
 
 public:
     bot_auth(
@@ -34,8 +33,7 @@ private:
     auto make_auth_handler() {
         return [this, id = ++m_authentication_query_id](td::td_api::object_ptr<td::td_api::Object> object) {
             if (id == m_authentication_query_id && object->get_id() == td::td_api::error::ID) {
-                auto err = std::move(*td::move_tl_object_as<td::td_api::error>(object));
-                std::invoke(std::move(m_callback), std::unexpected(std::move(err)));
+                std::invoke(std::move(m_callback), m_client, td::move_tl_object_as<td::td_api::error>(object));
             }
         };
     }
@@ -78,9 +76,9 @@ void bot_auth::on_update(td::td_api::Object &update) {
     // TODO: remove most of the log messages
     td::td_api::downcast_call(
         *auth_state.authorization_state_,
-        util::overload{
+        grace::fn::bind::overload{
             [this](td::td_api::authorizationStateReady &) {
-                m_client.post(std::bind_front(std::move(m_callback), result_type()));
+                m_client.post(std::bind_front(std::move(m_callback), std::ref(m_client), nullptr));
                 spdlog::info("Bot is online and ready to echo messages.");
             },
             [this](td::td_api::authorizationStateLoggingOut &) {

@@ -21,7 +21,7 @@ class client : public receiver
 {
 public:
     using callback_type = std::move_only_function<void(td::td_api::object_ptr<td::td_api::Object>) &&>;
-    using signal_type = util::signal<void(td::td_api::Object &)>;
+    using signal_type = util::signal<void(td::td_api::Object &)>; // FIXME: TODO: the `Object` must be `const`
 
 public:
     class delegate

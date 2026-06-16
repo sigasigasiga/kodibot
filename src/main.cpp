@@ -22,7 +22,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <sstream>
 #include <stop_token>
 #include <string>
@@ -31,14 +30,13 @@
 
 #include <unistd.h>
 
+import grace;
+import kodibot.bot;
 import kodibot.kodi;
 import kodibot.telegram;
 import kodibot.util;
 
 namespace td_api = td::td_api;
-namespace kodi = kodibot::kodi;
-namespace tg = kodibot::telegram;
-namespace util = kodibot::util;
 
 namespace {
 
@@ -53,23 +51,48 @@ extern "C" void handle_termination_signal(int /*signum*/) {
     }
 }
 
-class kodibot_app {
+auto make_auth_params(td_api::int32 api_id, std::string api_hash)
+{
+    auto request = td_api::make_object<td_api::setTdlibParameters>();
+    request->database_directory_ = "tdlib_db";
+    request->use_message_database_ = true;
+    request->use_secret_chats_ = false;
+    request->api_id_ = api_id;
+    request->api_hash_ = std::move(api_hash);
+    request->system_language_code_ = "en";
+    request->device_model_ = "Server";
+    request->application_version_ = "1.0";
+    return request;
+}
+
+
+class kodibot_app : private kodibot::bot::bot::hoster
+                  , private kodibot::bot::bot::player
+{
 public:
-    kodibot_app(td_api::int32 api_id, std::string api_hash, std::string bot_token, int http_port,
-                std::set<std::int64_t> user_whitelist, kodi::connection kodi_conn,
-                std::string public_host)
+    kodibot_app(
+        td_api::int32 api_id,
+        std::string api_hash,
+        std::string bot_token,
+        int http_port,
+        std::unordered_set<std::int64_t> user_whitelist,
+        kodibot::kodi::connection kodi_conn,
+        std::string public_host
+    )
         : m_client(m_client_manager.make_client())
-        , m_bot_auth(m_client, make_tdlib_parameters(api_id, std::move(api_hash)), std::move(bot_token))
-        , m_http_port(http_port)
+        , m_state(
+              std::in_place_index<0>,
+              m_client,
+              make_auth_params(api_id, api_hash),
+              std::move(bot_token)
+          )
         , m_user_whitelist(std::move(user_whitelist))
+        , m_http_port(http_port)
         , m_kodi_enabled(!kodi_conn.host.empty())
         , m_kodi(std::move(kodi_conn))
         , m_public_host(std::move(public_host))
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
-        m_update_connection = m_client.subscribe([this](td_api::Object &update) {
-            on_update(update);
-        });
         setup_http_routes();
     }
 
@@ -78,12 +101,18 @@ public:
         std::signal(SIGINT, handle_termination_signal);
         std::signal(SIGTERM, handle_termination_signal);
 
-        m_bot_auth.start([this](std::expected<void, td_api::error> result) {
-            if (!result) {
-                spdlog::error("Authentication failed: {}", to_string(result.error()));
+        get<0>(m_state).start([this](kodibot::telegram::client &client, td::td_api::object_ptr<td::td_api::error> error) {
+            if (error) {
+                spdlog::error("Authentication failed: {}", to_string(*error));
                 m_stop_source.request_stop();
             } else {
                 spdlog::info("Bot is online and ready.");
+                m_state.emplace<1>(
+                    static_cast<kodibot::bot::bot::hoster &>(*this),
+                    static_cast<kodibot::bot::bot::player &>(*this),
+                    client,
+                    std::move(m_user_whitelist)
+                );
             }
         });
 
@@ -119,21 +148,6 @@ private:
         bool supports_streaming{false};
     };
 
-    static td_api::object_ptr<td_api::setTdlibParameters> make_tdlib_parameters(
-        td_api::int32 api_id, std::string api_hash)
-    {
-        auto request = td_api::make_object<td_api::setTdlibParameters>();
-        request->database_directory_ = "tdlib_db";
-        request->use_message_database_ = true;
-        request->use_secret_chats_ = false;
-        request->api_id_ = api_id;
-        request->api_hash_ = std::move(api_hash);
-        request->system_language_code_ = "en";
-        request->device_model_ = "Server";
-        request->application_version_ = "1.0";
-        return request;
-    }
-
     // Synchronous wrapper around the asynchronous client::send_request, used by
     // the HTTP worker thread. The callback runs on the client_manager::run()
     // thread; we block here until it fires.
@@ -146,109 +160,44 @@ private:
         return future.get();
     }
 
-    void on_update(td_api::Object &update) {
-        td_api::downcast_call(update, util::overload{
-            [this](td_api::updateNewMessage &update_new_message) {
-                on_new_message(*update_new_message.message_);
-            },
-            [](td_api::Object &upd) {
-                spdlog::trace("unhandled update: {}", upd.get_id());
-            },
-        });
-    }
-
-    void on_new_message(td_api::message &message) {
-        if (message.is_outgoing_) {
-            return;
-        }
-
-        // Drop messages that were sent before the bot started. When the bot comes
-        // online, TDLib replays every message received while it was offline as an
-        // updateNewMessage; we only ever want to act on messages sent live.
-        if (message.date_ < m_start_time) {
-            spdlog::debug(
-                "Dropping message sent while offline (date={}, started={})",
-                message.date_, m_start_time);
-            return;
-        }
-
-        if (!is_sender_allowed(message)) {
-            return;
-        }
-
-        td_api::downcast_call(*message.content_, util::overload{
-            [this](td_api::messageVideo &m) {
-                if (m.video_) {
-                    register_video(*m.video_);
-                }
-            },
-            [](td_api::MessageContent &m) {
-                spdlog::trace("Got message content {}, ignoring...", m.get_id());
-            },
-        });
-    }
-
-    // Returns true if the message may be processed. Only messages sent by a
-    // whitelisted user are accepted; an empty whitelist allows no one. Messages
-    // sent on behalf of a chat (rather than a user) are never allowed.
-    bool is_sender_allowed(const td_api::message &message) const {
-        std::int64_t sender_user_id = 0;
-        if (message.sender_id_) {
-            td_api::downcast_call(
-                const_cast<td_api::MessageSender &>(*message.sender_id_), util::overload{
-                    [&](const td_api::messageSenderUser &s) { sender_user_id = s.user_id_; },
-                    [](const td_api::MessageSender &) {},
-                });
-        }
-
-        if (sender_user_id != 0 && m_user_whitelist.contains(sender_user_id)) {
-            return true;
-        }
-
-        spdlog::warn(
-            "Dropping message from non-whitelisted sender (user_id={}, chat_id={})",
-            sender_user_id, message.chat_id_);
-        return false;
-    }
-
-    void register_video(const td_api::video &video) {
-        if (!video.video_) {
-            return;
-        }
-        const auto file_id = video.video_->id_;
-        auto size = video.video_->size_;
-        if (size == 0) {
-            size = video.video_->expected_size_;
-        }
+    // kodibot::bot::bot::hoster
+    std::string host_video(
+        td::td_api::int32 file_id,
+        td::td_api::int53 size,
+        std::string mime_type,
+        bool supports_streaming
+    ) final {
         video_info info{
             .file_id = file_id,
             .size = size,
-            .mime_type = video.mime_type_.empty() ? std::string{"video/mp4"} : video.mime_type_,
-            .supports_streaming = video.supports_streaming_,
+            .mime_type = std::move(mime_type),
+            .supports_streaming = supports_streaming,
         };
+
         {
             std::lock_guard lock(m_videos_mutex);
             m_videos[file_id] = info;
         }
+
         spdlog::info(
             "Registered video at /videos/{} (size={}, mime={}, streaming={})",
-            file_id, size, info.mime_type, info.supports_streaming);
+            file_id, size, info.mime_type, info.supports_streaming
+        );
 
-        play_on_kodi(file_id);
+        return std::format("http://{}:{}/videos/{}", m_public_host, m_http_port, file_id);
     }
 
-    // Tells Kodi to start playing the just-registered video. The request runs on
-    // a detached thread: this method is called from the client_manager::run()
-    // receive loop, but Player.Open can block until Kodi opens the stream, which
-    // it does by fetching from our HTTP server thread, which in turn relies on
-    // the receive loop to fulfil downloadFile. Blocking here would deadlock.
-    void play_on_kodi(td_api::int32 file_id) {
+    // kodibot::bot::bot::player
+    void play(std::string url) final {
         if (!m_kodi_enabled) {
             return;
         }
-        const std::string url = std::format(
-            "http://{}:{}/videos/{}", m_public_host, m_http_port, file_id);
-        std::thread([this, url] {
+
+        // The request runs on a detached thread: this method is called from the client_manager::run()
+        // receive loop, but Player.Open can block until Kodi opens the stream, which
+        // it does by fetching from our HTTP server thread, which in turn relies on
+        // the receive loop to fulfil downloadFile. Blocking here would deadlock.
+        std::thread([this, url = std::move(url)] {
             spdlog::info("Asking Kodi to play {}", url);
             if (auto result = m_kodi.play(url); !result) {
                 spdlog::error("Kodi playback failed: {}", result.error());
@@ -374,14 +323,17 @@ private:
     }
 
 private:
-    tg::client_manager m_client_manager;
-    tg::client &m_client;
-    tg::bot_auth m_bot_auth;
-    util::scoped_connection m_update_connection;
-    std::stop_source m_stop_source;
+    using state_type = std::variant<
+        kodibot::telegram::bot_auth,
+        kodibot::bot::bot
+    >;
 
-    // Unix time at which the bot started; messages older than this are dropped.
-    td_api::int32 m_start_time{static_cast<td_api::int32>(std::time(nullptr))};
+private:
+    kodibot::telegram::client_manager m_client_manager;
+    kodibot::telegram::client &m_client;
+    std::stop_source m_stop_source;
+    std::unordered_set<td::td_api::int53> m_user_whitelist;
+    state_type m_state;
 
     int m_http_port;
     httplib::Server m_server;
@@ -390,10 +342,8 @@ private:
     std::mutex m_videos_mutex;
     std::map<td_api::int32, video_info> m_videos;
 
-    std::set<std::int64_t> m_user_whitelist;
-
     bool m_kodi_enabled;
-    kodi::client m_kodi;
+    kodibot::kodi::client m_kodi;
     std::string m_public_host;
 };
 
@@ -438,8 +388,8 @@ void load_systemd_credentials(const boost::program_options::options_description 
 // Parses a comma-separated list of Telegram user IDs (e.g. "123,456,789") into
 // a set. Whitespace around entries is ignored; invalid entries are skipped with
 // a warning.
-std::set<std::int64_t> parse_user_whitelist(const std::string &spec) {
-    std::set<std::int64_t> whitelist;
+std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
+    std::unordered_set<std::int64_t> whitelist;
     std::stringstream stream(spec);
     std::string entry;
     while (std::getline(stream, entry, ',')) {
@@ -527,7 +477,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::set<std::int64_t> user_whitelist = parse_user_whitelist(whitelist_str);
+    auto user_whitelist = parse_user_whitelist(whitelist_str);
     if (user_whitelist.empty()) {
         spdlog::warn(
             "User whitelist is empty; no incoming messages will be processed. "
@@ -536,7 +486,7 @@ int main(int argc, char **argv) {
         spdlog::info("Loaded user whitelist with {} entries.", user_whitelist.size());
     }
 
-    kodi::connection kodi_conn;
+    kodibot::kodi::connection kodi_conn;
     kodi_conn.host = kodi_host;
     kodi_conn.port = kodi_port;
     kodi_conn.username = std::move(kodi_username);

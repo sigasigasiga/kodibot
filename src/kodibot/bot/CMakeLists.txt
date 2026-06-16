@@ -1,30 +1,28 @@
-add_library(kodibot.telegram)
+add_library(kodibot.bot)
 
 target_sources(
-    kodibot.telegram
+    kodibot.bot
 
     PUBLIC
 
     FILE_SET
     CXX_MODULES FILES
 
-    bot_auth.cppm
-    client.cppm
-    client_manager.cppm
-    downcast.cppm
-    receiver.cppm
+    bot.cppm
 
     module.cppm
 )
 
 target_link_libraries(
-    kodibot.telegram
+    kodibot.bot
 
     PRIVATE
 
-    grace
+    httplib::httplib
     Td::TdStatic
     spdlog::spdlog
 
+    kodibot.kodi
+    kodibot.telegram
     kodibot.util
 )

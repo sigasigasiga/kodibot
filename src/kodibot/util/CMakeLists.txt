@@ -8,7 +8,6 @@ target_sources(
     FILE_SET
     CXX_MODULES FILES
 
-    functional.cppm
     signal.cppm
 
     module.cppm

@@ -13,6 +13,7 @@ target_link_libraries(
     Boost::headers
     Boost::program_options
 
+    kodibot.bot
     kodibot.kodi
     kodibot.telegram
     kodibot.util

@@ -60,7 +60,7 @@ public:
 
     // Asks Kodi to start playing the media at `url` via Player.Open. Blocking
     // HTTP call; returns an error description on failure.
-    std::expected<void, std::string> play(const std::string &url);
+    std::expected<void, std::string> play(std::string_view url);
 
 private:
     connection m_conn;
@@ -71,7 +71,7 @@ client::client(connection conn)
 {
 }
 
-std::expected<void, std::string> client::play(const std::string &url) {
+std::expected<void, std::string> client::play(std::string_view url) {
     const std::string body = spdlog::fmt_lib::format(
         R"({{"jsonrpc":"2.0","id":1,"method":"Player.Open","params":{{"item":{{"file":"{}"}}}}}})",
         json_escape(url));
