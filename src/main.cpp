@@ -23,7 +23,6 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
-#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -39,17 +38,6 @@ import kodibot.util;
 namespace td_api = td::td_api;
 
 namespace {
-
-// Set while kodibot_app::run() is executing so the signal handler can request a
-// graceful shutdown. request_stop() on libstdc++/libc++ is lock-free, which is
-// good enough for use from a signal handler here.
-std::stop_source *g_stop_source = nullptr;
-
-extern "C" void handle_termination_signal(int /*signum*/) {
-    if (g_stop_source) {
-        g_stop_source->request_stop();
-    }
-}
 
 auto make_auth_params(td_api::int32 api_id, std::string api_hash)
 {
@@ -99,7 +87,7 @@ public:
             (kodibot::telegram::client &client, td::td_api::object_ptr<td::td_api::error> error) mutable {
                 if (error) {
                     spdlog::error("Authentication failed: {}", to_string(*error));
-                    m_stop_source.request_stop();
+                    m_client_manager.stop();
                 } else {
                     spdlog::info("Bot is online and ready.");
                     m_state.emplace<1>(
@@ -114,32 +102,29 @@ public:
     }
 
     void run() {
-        g_stop_source = &m_stop_source; // FIXME: this should be a part of `telegram::client_manager`
-        std::signal(SIGINT, handle_termination_signal);
-        std::signal(SIGTERM, handle_termination_signal);
-
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server listening on 0.0.0.0:{}", m_http_port);
             if (!m_server.listen("0.0.0.0", m_http_port)) {
                 spdlog::error("HTTP server failed to bind to port {}", m_http_port);
-                m_stop_source.request_stop();
+                m_client_manager.stop();
             }
         });
 
         // Drives the TDLib receive loop and dispatches responses/updates back
         // to the client (and therefore to our subscribed handlers). Returns once
         // a shutdown has been requested (signal or auth failure).
-        m_client_manager.run(m_stop_source.get_token());
+        m_client_manager.run();
 
         spdlog::info("Shutting down...");
         m_server.stop();
         if (m_http_thread.joinable()) {
             m_http_thread.join();
         }
+    }
 
-        std::signal(SIGINT, SIG_DFL);
-        std::signal(SIGTERM, SIG_DFL);
-        g_stop_source = nullptr;
+    void stop() {
+        m_client_manager.stop();
+        m_server.stop();
     }
 
 private:
@@ -333,7 +318,6 @@ private:
 private:
     kodibot::telegram::client_manager m_client_manager;
     kodibot::telegram::client &m_client;
-    std::stop_source m_stop_source;
     state_type m_state;
 
     int m_http_port;
@@ -407,6 +391,17 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
         }
     }
     return whitelist;
+}
+
+// Set while kodibot_app::run() is executing so the signal handler can request a
+// graceful shutdown. request_stop() on libstdc++/libc++ is lock-free, which is
+// good enough for use from a signal handler here.
+kodibot_app *g_app = nullptr;
+
+extern "C" void handle_termination_signal(int /*signum*/) {
+    if (g_app) {
+        g_app->stop();
+    }
 }
 
 }  // namespace
@@ -516,6 +511,16 @@ int main(int argc, char **argv) {
 
     kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port,
                     std::move(user_whitelist), std::move(kodi_conn), std::move(public_host));
+
+    g_app = &bot;
+    std::signal(SIGINT, handle_termination_signal);
+    std::signal(SIGTERM, handle_termination_signal);
+
     bot.run();
+
+    std::signal(SIGTERM, SIG_DFL);
+    std::signal(SIGINT, SIG_DFL);
+    g_app = nullptr;
+
     return 0;
 }

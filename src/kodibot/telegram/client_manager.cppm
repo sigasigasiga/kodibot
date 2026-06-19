@@ -20,7 +20,8 @@ public:
 
     // Drives the receive loop until the stop token is triggered. receive() uses
     // a short timeout so a stop request is observed promptly.
-    void run(std::stop_token token);
+    void run();
+    void stop();
 
 private: // client::delegate
     void send_request(
@@ -31,6 +32,7 @@ private: // client::delegate
 
 private:
     td::ClientManager m_client_manager;
+    std::stop_source m_stop;
 
     std::map<td::ClientManager::ClientId, std::unique_ptr<receiver>> m_clients;
 };
@@ -50,8 +52,8 @@ client &client_manager::make_client() {
     return c_ref;
 }
 
-void client_manager::run(std::stop_token token) {
-    while (!token.stop_requested()) {
+void client_manager::run() {
+    while (!m_stop.stop_requested()) {
         auto resp = m_client_manager.receive(1);
         if (!resp.object) {
             continue;
@@ -69,6 +71,10 @@ void client_manager::run(std::stop_token token) {
             it->second->on_response(resp.request_id, std::move(resp).object);
         }
     }
+}
+
+void client_manager::stop() {
+    m_stop.request_stop();
 }
 
 // client::delegate
