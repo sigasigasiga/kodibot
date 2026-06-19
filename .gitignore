@@ -1,4 +1,4 @@
 build/
-build-arch/
+build-gcc/
 tdlib_db/
-run.sh
+kodibot.conf
