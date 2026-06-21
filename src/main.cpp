@@ -39,10 +39,10 @@ namespace td_api = td::td_api;
 
 namespace {
 
-auto make_auth_params(td_api::int32 api_id, std::string api_hash)
+auto make_auth_params(td_api::int32 api_id, std::string api_hash, std::string db_path)
 {
     auto request = td_api::make_object<td_api::setTdlibParameters>();
-    request->database_directory_ = "tdlib_db";
+    request->database_directory_ = std::move(db_path);
     request->use_message_database_ = true;
     request->use_secret_chats_ = false;
     request->api_id_ = api_id;
@@ -59,6 +59,7 @@ class kodibot_app : private kodibot::bot::bot::hoster
 {
 public:
     kodibot_app(
+        std::string db_path,
         td_api::int32 api_id,
         std::string api_hash,
         std::string bot_token,
@@ -71,7 +72,7 @@ public:
         , m_state(
               std::in_place_index<0>,
               m_client,
-              make_auth_params(api_id, std::move(api_hash)),
+              make_auth_params(api_id, std::move(api_hash), std::move(db_path)),
               std::move(bot_token)
           )
         , m_http_port(http_port)
@@ -411,6 +412,7 @@ int main(int argc, char **argv) {
 
     namespace po = boost::program_options;
 
+    std::string db_path;
     td_api::int32 api_id = 0;
     std::string api_hash;
     std::string token;
@@ -425,6 +427,8 @@ int main(int argc, char **argv) {
     po::options_description options("Options");
     options.add_options()
         ("help,h", "Show this help message and exit.")
+        ("telegram-db-path", po::value<std::string>(&db_path)->required(),
+         "Telegram database path")
         ("telegram-api-id", po::value<td_api::int32>(&api_id)->required(),
          "Telegram API id.")
         ("telegram-api-hash", po::value<std::string>(&api_hash)->required(),
@@ -509,8 +513,16 @@ int main(int argc, char **argv) {
         spdlog::info("Kodi playback enabled (target {}:{}).", kodi_conn.host, kodi_conn.port);
     }
 
-    kodibot_app bot(api_id, std::move(api_hash), std::move(token), http_port,
-                    std::move(user_whitelist), std::move(kodi_conn), std::move(public_host));
+    kodibot_app bot(
+        std::move(db_path),
+        api_id,
+        std::move(api_hash),
+        std::move(token),
+        http_port,
+        std::move(user_whitelist),
+        std::move(kodi_conn),
+        std::move(public_host)
+    );
 
     g_app = &bot;
     std::signal(SIGINT, handle_termination_signal);
