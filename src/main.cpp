@@ -259,7 +259,7 @@ private:
                 }
                 in.seekg(static_cast<std::streamoff>(offset));
 
-                std::array<char, kChunkSize> buf{};
+                std::vector<char> buf(to_fetch);
                 in.read(buf.data(), to_fetch);
                 const auto n = in.gcount();
                 if (n <= 0) {
