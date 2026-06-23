@@ -1,0 +1,35 @@
+# 1. Create your secret: `podman secret create kodibot-credentials <path-to-kodibot.conf-file>`
+# 2. Install the quadlet: `podman quadlet install --replace --reload-systemd kodibot.container `
+# 3. Start the service: `systemctl --user start kodibot`
+
+[Unit]
+Description=Kodibot Container
+
+[Container]
+ContainerName=kodibot
+AutoUpdate=registry
+
+# Do not change these values
+Image=ghcr.io/sigasigasiga/kodibot:main
+Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --public-host 0.0.0.0
+
+# Volumes
+Volume=%h/kodibot/tdlib-db:/tdlib-db:Z
+
+# Credentials
+Secret=kodibot-credentials,type=mount,target=/var/lib/kodibot/kodibot.conf
+Environment=CREDENTIALS_DIRECTORY=/var/lib/kodibot/
+
+# Network
+Network=bridge
+PublishPort=127.0.0.1:9988:9988
+AddHost=host.containers.internal:host-gateway
+
+UserNS=keep-id:uid=1000,gid=1000
+
+[Quadlet]
+# FIXME: figure out why it is so slow without it
+DefaultDependencies=false
+
+[Install]
+WantedBy=default.target
