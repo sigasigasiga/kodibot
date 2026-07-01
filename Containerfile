@@ -1,6 +1,8 @@
 #### BUILDER
 FROM alpine:latest AS builder
 
+ARG BUILD_TYPE=RelWithDebInfo
+
 # Build essentials
 RUN apk add --no-cache build-base clang22 clang22-extra-tools cmake ninja-build
 
@@ -16,7 +18,7 @@ RUN apk add --no-cache spdlog-dev openssl-dev boost-dev
 WORKDIR /src
 COPY . /src
 RUN mkdir -p /out && \
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' && \
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' && \
     cmake --build build -j && \
     cp build/src/kodibot.x /out/ && \
     echo 'Build finished, artifact at /out/kodibot.x'
