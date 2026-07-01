@@ -37,6 +37,34 @@ import kodibot.util;
 
 namespace td_api = td::td_api;
 
+namespace boost {
+
+void validate(
+    boost::any &v,
+    const std::vector<std::string>& values,
+    spdlog::level::level_enum *target,
+    int
+) {
+    namespace po = boost::program_options;
+
+    auto val = po::validators::get_single_string(values);
+    std::ranges::transform(val, val.begin(), &grace::utility::to_lower);
+
+    constexpr std::array log_levels = SPDLOG_LEVEL_NAMES;
+
+    if (std::ranges::contains(log_levels, val)) {
+        v = boost::any(spdlog::level::from_str(val));
+    } else {
+        throw po::validation_error(
+            po::validation_error::invalid_option_value,
+            "log-level",
+            val
+        );
+    }
+}
+
+} // namespace boost
+
 namespace {
 
 auto make_auth_params(td_api::int32 api_id, std::string api_hash, std::string db_path)
@@ -408,10 +436,9 @@ extern "C" void handle_termination_signal(int /*signum*/) {
 }  // namespace
 
 int main(int argc, char **argv) {
-    spdlog::set_level(spdlog::level::debug);
-
     namespace po = boost::program_options;
 
+    spdlog::level::level_enum log_level = spdlog::level::info;
     std::string db_path;
     td_api::int32 api_id = 0;
     std::string api_hash;
@@ -424,9 +451,17 @@ int main(int argc, char **argv) {
     std::string kodi_password;
     std::string public_host;
 
+    using namespace std::string_view_literals;
+
+    constexpr std::array log_levels_arr = SPDLOG_LEVEL_NAMES;
+    std::string log_levels_msg = log_levels_arr | std::views::join_with(", "sv) | std::ranges::to<std::string>();
+    auto log_level_option_msg = std::format("Log level: {}.", log_levels_msg);
+
     po::options_description options("Options");
     options.add_options()
         ("help,h", "Show this help message and exit.")
+        ("log-level", po::value<spdlog::level::level_enum>(&log_level)->default_value(spdlog::level::info, "info"),
+         log_level_option_msg.c_str())
         ("telegram-db-path", po::value<std::string>(&db_path)->required(),
          "Telegram database path")
         ("telegram-api-id", po::value<td_api::int32>(&api_id)->required(),
@@ -451,7 +486,8 @@ int main(int argc, char **argv) {
          "Kodi JSON-RPC password.")
         ("public-host", po::value<std::string>(&public_host),
          "Address Kodi uses to reach this bot's HTTP server "
-         "(defaults to the local hostname).");
+         "(defaults to the local hostname).")
+    ;
 
     po::variables_map vm;
     try {
@@ -476,6 +512,8 @@ int main(int argc, char **argv) {
                       argc > 0 ? argv[0] : "kodibot", usage.str());
         return 1;
     }
+
+    spdlog::set_level(log_level);
 
     auto user_whitelist = parse_user_whitelist(whitelist_str);
     if (user_whitelist.empty()) {
