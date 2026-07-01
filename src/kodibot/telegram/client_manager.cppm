@@ -75,6 +75,9 @@ void client_manager::run() {
 
 void client_manager::stop() {
     m_stop.request_stop();
+
+    // funny way to wake up the event loop :)
+    make_client().post([] {});
 }
 
 // client::delegate
