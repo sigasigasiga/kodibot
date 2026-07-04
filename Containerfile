@@ -37,7 +37,8 @@ WORKDIR /source
 COPY --parents ./CMakeLists.txt ./src/ ./third_party/  /source/
 COPY --from=tdlib_builder /usr/local /usr/local
 
-RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' && \
+RUN --mount=type=cache,target=/source/build \
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' && \
     cmake --build build --parallel `nproc` && \
     cp build/src/kodibot.x /usr/local/bin/kodibot && \
     echo 'Build finished, artifact at /out/kodibot.x'
