@@ -3,9 +3,6 @@ ARG BUILD_TYPE=RelWithDebInfo
 # TDLIB BUILDER ================================================================
 FROM alpine:latest AS tdlib_builder
 
-# Inherit global build args
-ARG BUILD_TYPE
-
 # tdlib build essentials
 RUN apk add --no-cache build-base cmake
 
@@ -14,7 +11,7 @@ RUN apk add --no-cache gperf openssl-dev zlib-dev linux-headers
 
 WORKDIR /tdlib
 COPY third_party/tdlib /tdlib
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE} && \
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build --parallel `nproc` && \
     cmake --install build --prefix /usr/local
 
