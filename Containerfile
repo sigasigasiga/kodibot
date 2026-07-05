@@ -46,7 +46,7 @@ RUN --mount=type=cache,target=/source/build \
 #### RUNTIME ===================================================================
 FROM alpine:latest AS runtime
 
-RUN apk add --no-cache openssl boost-libs libgcc libstdc++ ca-certificates spdlog
+RUN apk add --no-cache openssl zstd boost-program_options spdlog
 
 COPY --from=kodibot_builder /usr/local/bin/kodibot /usr/local/bin/kodibot
 
