@@ -15,7 +15,7 @@ Image=ghcr.io/sigasigasiga/kodibot:main
 Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --public-host 0.0.0.0
 
 # Volumes
-Volume=%h/kodibot/tdlib-db:/tdlib-db:Z
+Volume=kodibot-tdlib:/tdlib-db
 
 # Credentials
 Secret=kodibot-credentials,type=mount,target=/var/lib/kodibot/kodibot.conf
