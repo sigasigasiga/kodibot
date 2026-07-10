@@ -81,6 +81,9 @@ auto make_auth_params(td_api::int32 api_id, std::string api_hash, std::string db
     return request;
 }
 
+void print_help(const boost::program_options::options_description &options) {
+    std::cout << "Usage: kodibot [options]\n" << options << std::endl;
+}
 
 class kodibot_app : private kodibot::bot::bot::hoster
                   , private kodibot::bot::bot::player
@@ -489,6 +492,8 @@ int main(int argc, char **argv) {
          "(defaults to the local hostname).")
     ;
 
+    const std::string_view exe_name = argc > 0 ? argv[0] : "kodibot";
+
     po::variables_map vm;
     try {
         // Store the command line first so it takes precedence over the
@@ -496,10 +501,7 @@ int main(int argc, char **argv) {
         // each option.
         po::store(po::parse_command_line(argc, argv, options), vm);
         if (vm.count("help")) {
-            std::ostringstream usage;
-            usage << options;
-            spdlog::info("Usage: {} [options]\n{}",
-                         argc > 0 ? argv[0] : "kodibot", usage.str());
+            print_help(options);
             return 0;
         }
 
@@ -508,11 +510,8 @@ int main(int argc, char **argv) {
         load_systemd_credentials(options, vm);
         po::notify(vm);
     } catch (const po::error &e) {
-        spdlog::error("{}", e.what());
-        std::ostringstream usage;
-        usage << options;
-        spdlog::error("Usage: {} [options]\n{}",
-                      argc > 0 ? argv[0] : "kodibot", usage.str());
+        spdlog::error("Cannot parse arguments: {}", e.what());
+        print_help(options);
         return 1;
     }
 
