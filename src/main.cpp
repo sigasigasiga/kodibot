@@ -502,6 +502,9 @@ int main(int argc, char **argv) {
                          argc > 0 ? argv[0] : "kodibot", usage.str());
             return 0;
         }
+
+        spdlog::set_level(log_level);
+
         load_systemd_credentials(options, vm);
         po::notify(vm);
     } catch (const po::error &e) {
@@ -512,8 +515,6 @@ int main(int argc, char **argv) {
                       argc > 0 ? argv[0] : "kodibot", usage.str());
         return 1;
     }
-
-    spdlog::set_level(log_level);
 
     auto user_whitelist = parse_user_whitelist(whitelist_str);
     if (user_whitelist.empty()) {
