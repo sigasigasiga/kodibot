@@ -12,7 +12,6 @@ export module kodibot.kodi:client;
 
 namespace kodibot::kodi {
 
-// Escapes `in` so it can be embedded as a JSON string value.
 std::string json_escape(std::string_view in) {
     std::string out;
     out.reserve(in.size() + 2);
@@ -40,9 +39,6 @@ std::string json_escape(std::string_view in) {
 
 export namespace kodibot::kodi {
 
-// Connection parameters for a Kodi instance exposing the JSON-RPC HTTP
-// interface (Settings -> Services -> Control -> "Allow remote control via
-// HTTP"). username/password are optional and only used when username is set.
 struct connection
 {
     std::string host;
@@ -51,15 +47,11 @@ struct connection
     std::string password;
 };
 
-// Minimal Kodi JSON-RPC client. A new HTTP connection is opened per request, so
-// instances are safe to use from any thread.
 class client
 {
 public:
     explicit client(connection conn);
 
-    // Asks Kodi to start playing the media at `url` via Player.Open. Blocking
-    // HTTP call; returns an error description on failure.
     std::expected<void, std::string> play(std::string_view url);
 
 private:

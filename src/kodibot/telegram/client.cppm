@@ -73,9 +73,6 @@ private:
     delegate &m_delegate;
     td::ClientManager::ClientId m_id;
 
-    // Guards m_request_id and m_callbacks, which are accessed both from the
-    // client_manager receive loop (on_response) and from any thread calling
-    // send_request (e.g. the HTTP worker thread).
     std::mutex m_mutex;
     td::ClientManager::RequestId m_request_id;
     std::map<td::ClientManager::RequestId, callback_type> m_callbacks;
@@ -112,8 +109,6 @@ void client::on_response(
     td::ClientManager::RequestId id,
     td::td_api::object_ptr<td::td_api::Object> object
 ) {
-    // Extract the callback under the lock, but invoke it without holding the
-    // mutex: the callback may itself call send_request (re-entrant locking).
     callback_type cb;
     {
         std::lock_guard lock(m_mutex);
@@ -122,6 +117,8 @@ void client::on_response(
         }
     }
 
+    // NB: callback must not be invoked under the lock because it may call `send_request`
+    // and lock the mutex again, which is UB.
     if (cb) {
         std::invoke(std::move(cb), std::move(object));
     }

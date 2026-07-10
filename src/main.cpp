@@ -142,9 +142,6 @@ public:
             }
         });
 
-        // Drives the TDLib receive loop and dispatches responses/updates back
-        // to the client (and therefore to our subscribed handlers). Returns once
-        // a shutdown has been requested (signal or auth failure).
         m_client_manager.run();
 
         spdlog::info("Shutting down...");
@@ -167,9 +164,6 @@ private:
         bool supports_streaming{false};
     };
 
-    // Synchronous wrapper around the asynchronous client::send_request, used by
-    // the HTTP worker thread. The callback runs on the client_manager::run()
-    // thread; we block here until it fires.
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
         auto promise = std::make_shared<std::promise<td_api::object_ptr<td_api::Object>>>();
         auto future = promise->get_future();
@@ -270,22 +264,28 @@ private:
                 dl_req->synchronous_ = true;
                 auto dl_result = send_query_sync(std::move(dl_req));
                 if (!dl_result || dl_result->get_id() != td_api::file::ID) {
-                    spdlog::warn("downloadFile failed for file_id={} at offset={}",
-                                 info.file_id, offset);
+                    spdlog::warn(
+                        "downloadFile failed for file_id={} at offset={}",
+                        info.file_id, offset
+                    );
                     return false;
                 }
 
                 auto file = td::move_tl_object_as<td_api::file>(dl_result);
                 if (!file->local_ || file->local_->path_.empty()) {
-                    spdlog::warn("no local path for file_id={} at offset={}",
-                                 info.file_id, offset);
+                    spdlog::warn(
+                        "no local path for file_id={} at offset={}",
+                        info.file_id, offset
+                    );
                     return false;
                 }
 
                 std::ifstream in(file->local_->path_, std::ios::binary);
                 if (!in) {
-                    spdlog::warn("failed to open {} for file_id={}",
-                                 file->local_->path_, info.file_id);
+                    spdlog::warn(
+                        "failed to open {} for file_id={}",
+                        file->local_->path_, info.file_id
+                    );
                     return false;
                 }
                 in.seekg(static_cast<std::streamoff>(offset));
@@ -364,22 +364,17 @@ private:
     std::string m_public_host;
 };
 
-// Name of the credentials file looked up inside $CREDENTIALS_DIRECTORY. With
-// systemd this is the credential id, e.g. configured via
-// `LoadCredential=kodibot.conf:/etc/kodibot.conf` in the unit file.
-constexpr const char *kCredentialsFileName = "kodibot.conf";
+constexpr const char *k_credentials_filename = "kodibot.conf";
 
-// Loads options from the systemd credentials store, if available. systemd
-// exposes credentials as files inside the directory named by
-// $CREDENTIALS_DIRECTORY; we parse kCredentialsFileName there as a
-// program_options config file (one `key = value` per line, using the same
-// long option names as the command line).
+// https://systemd.io/CREDENTIALS/
 //
-// Values already present in `vm` (i.e. those passed on the command line) take
-// precedence: program_options keeps the first stored, non-default value for
+// NB: Values already present in `vm` (i.e. those passed on the command line)
+// take precedence: program_options keeps the first stored, non-default value for
 // each option, so this must be called after the command line has been stored.
-void load_systemd_credentials(const boost::program_options::options_description &options,
-                              boost::program_options::variables_map &vm) {
+void load_systemd_credentials(
+    const boost::program_options::options_description &options,
+    boost::program_options::variables_map &vm
+) {
     namespace po = boost::program_options;
 
     const char *creds_dir = std::getenv("CREDENTIALS_DIRECTORY");
@@ -387,14 +382,14 @@ void load_systemd_credentials(const boost::program_options::options_description 
         return;
     }
 
-    const std::filesystem::path config_path =
-        std::filesystem::path(creds_dir) / kCredentialsFileName;
+    const auto config_path = std::filesystem::path(creds_dir) / k_credentials_filename;
     std::ifstream config_file(config_path);
     if (!config_file) {
         spdlog::warn(
             "CREDENTIALS_DIRECTORY is set but '{}' could not be opened; "
             "relying on command-line options only.",
-            config_path.string());
+            config_path.string()
+        );
         return;
     }
 
@@ -402,9 +397,6 @@ void load_systemd_credentials(const boost::program_options::options_description 
     po::store(po::parse_config_file(config_file, options), vm);
 }
 
-// Parses a comma-separated list of Telegram user IDs (e.g. "123,456,789") into
-// a set. Whitespace around entries is ignored; invalid entries are skipped with
-// a warning.
 std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
     std::unordered_set<std::int64_t> whitelist;
     std::stringstream stream(spec);
@@ -412,7 +404,7 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
     while (std::getline(stream, entry, ',')) {
         const auto begin = entry.find_first_not_of(" \t");
         if (begin == std::string::npos) {
-            continue;  // empty / whitespace-only entry
+            continue;
         }
         const auto end = entry.find_last_not_of(" \t");
         const auto trimmed = entry.substr(begin, end - begin + 1);
@@ -425,9 +417,6 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
     return whitelist;
 }
 
-// Set while kodibot_app::run() is executing so the signal handler can request a
-// graceful shutdown. request_stop() on libstdc++/libc++ is lock-free, which is
-// good enough for use from a signal handler here.
 kodibot_app *g_app = nullptr;
 
 extern "C" void handle_termination_signal(int /*signum*/) {
@@ -519,7 +508,8 @@ int main(int argc, char **argv) {
     if (user_whitelist.empty()) {
         spdlog::warn(
             "User whitelist is empty; no incoming messages will be processed. "
-            "Pass a comma-separated list of allowed user IDs to enable the bot.");
+            "Pass a comma-separated list of allowed user IDs to enable the bot."
+        );
     } else {
         spdlog::info("Loaded user whitelist with {} entries.", user_whitelist.size());
     }
@@ -532,8 +522,9 @@ int main(int argc, char **argv) {
 
     if (kodi_conn.host.empty()) {
         spdlog::warn(
-            "KODI_HOST is not set; Kodi playback is disabled. Videos will still be "
-            "served over HTTP. Pass a Kodi host to enable playback.");
+            "KODI_HOST is not set; Kodi playback is disabled. "
+            "Videos will still be served over HTTP. Pass a Kodi host to enable playback."
+        );
     } else {
         if (public_host.empty()) {
             std::array<char, 256> hostname{};
@@ -544,9 +535,10 @@ int main(int argc, char **argv) {
                 public_host = "localhost";
             }
             spdlog::warn(
-                "KODIBOT_PUBLIC_HOST is not set; defaulting to '{}'. Kodi must be "
-                "able to reach this bot's HTTP server at that address.",
-                public_host);
+                "KODIBOT_PUBLIC_HOST is not set; defaulting to '{}'. "
+                "Kodi must be able to reach this bot's HTTP server at that address.",
+                public_host
+            );
         }
         spdlog::info("Kodi playback enabled (target {}:{}).", kodi_conn.host, kodi_conn.port);
     }

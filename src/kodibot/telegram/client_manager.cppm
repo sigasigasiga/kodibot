@@ -18,8 +18,6 @@ class client_manager : private client::delegate
 public:
     client &make_client();
 
-    // Drives the receive loop until the stop token is triggered. receive() uses
-    // a short timeout so a stop request is observed promptly.
     void run();
     void stop();
 

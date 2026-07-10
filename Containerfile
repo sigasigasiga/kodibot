@@ -49,6 +49,4 @@ COPY --from=kodibot_builder /usr/local/bin/kodibot /usr/local/bin/kodibot
 
 EXPOSE 9988
 
-# Entrypoint runs the binary. Kodi host/port are configurable via command-line options
-# or environment variables as the program supports --kodi-host and --kodi-port.
 ENTRYPOINT ["/usr/local/bin/kodibot"]

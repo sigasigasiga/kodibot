@@ -15,7 +15,6 @@ endif()
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Prefer an installed Td (tdlib) package. If not found, build the bundled tdlib.
 find_package(Td CONFIG QUIET)
 if (Td_FOUND)
     message(STATUS "Using installed Td package")
