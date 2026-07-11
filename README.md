@@ -14,7 +14,7 @@ Before setting up kodibot, you need to:
 4. Obtain your Telegram user ID
 5. Have Podman installed on your systemd-based Linux system
 
-## Setup Instructions
+## Obtaining Credentials
 
 ### 1. Enable HTTP RPC in Kodi
 
@@ -76,16 +76,23 @@ To use the Telegram Bot API, you need to create an app on **my.telegram.org**:
 
 ### 4. Obtain Your Telegram User ID
 
-1. **Start a Chat with @userinfobot:**
-   - Open Telegram and search for `@userinfobot` or visit https://t.me/userinfobot
-   - Send `/start`
-   - The bot will reply with your **User ID** (a numeric value). Keep this ID for the whitelist configuration.
+1. Open Telegram and search for `@userinfobot` or visit https://t.me/userinfobot
+2. Send `/start`
+3. The bot will reply with your **User ID** (a numeric value). Keep this ID for the whitelist configuration.
 
-### 5. Installation on Linux with Podman
+## Installation
+
+Currently we have installation instructions only for Linux using Podman.
+
+Note that it is possible to run kodibot on other platforms (including Windows and macOS), but you will need to adapt the instructions yourself.
+If you have successfully run kodibot on another platform, please consider contributing your instructions to this README, I'll be happy to include them.
+
+### Installation on Linux with Podman
 
 #### Prerequisites:
+
 - Podman installed (https://podman.io/docs/installation)
-- Systemd user service support enabled (usually default)
+- systemd-based Linux distribution (any mainstream distro should work)
 
 #### Steps:
 
@@ -93,6 +100,8 @@ To use the Telegram Bot API, you need to create an app on **my.telegram.org**:
 ```bash
 wget https://github.com/sigasigasiga/kodibot/raw/refs/heads/main/podman/kodibot.container
 ```
+
+If you intend to run kodibot on a machine different from your Kodi instance, you may need to edit the `kodibot.container` file and change the IP address to the one that is reachable from your Kodi machine in the `PublishPort` field.
 
 2. **Create the configuration file:**
 
