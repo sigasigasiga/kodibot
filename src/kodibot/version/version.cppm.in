@@ -1,0 +1,11 @@
+module;
+
+#include <string_view>
+
+export module kodibot.version:version;
+
+export namespace kodibot::version {
+
+constexpr std::string_view version_string = "@KODIBOT_VERSION@";
+
+} // namespace kodibot::version

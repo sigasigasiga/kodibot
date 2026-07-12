@@ -34,6 +34,7 @@ import kodibot.bot;
 import kodibot.kodi;
 import kodibot.telegram;
 import kodibot.util;
+import kodibot.version;
 
 namespace td_api = td::td_api;
 
@@ -452,6 +453,7 @@ int main(int argc, char **argv) {
     po::options_description options("Options");
     options.add_options()
         ("help,h", "Show this help message and exit.")
+        ("version,v", "Show version and exit.")
         ("log-level", po::value<spdlog::level::level_enum>(&log_level)->default_value(spdlog::level::info, "info"),
          log_level_option_msg.c_str())
         ("telegram-db-path", po::value<std::string>(&db_path)->required(),
@@ -493,8 +495,14 @@ int main(int argc, char **argv) {
             print_help(options);
             return 0;
         }
+        if (vm.count("version")) {
+            std::cout << "kodibot " << kodibot::version::version_string << std::endl;
+            return 0;
+        }
 
         spdlog::set_level(log_level);
+
+        spdlog::info("Starting kodibot {}...", kodibot::version::version_string);
 
         load_systemd_credentials(options, vm);
         po::notify(vm);
