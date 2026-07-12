@@ -139,6 +139,6 @@ systemctl --user status kodibot
 
 # How It Works Internally
 
-When kodibot receives a video file from Telegram, it creates a unique HTTP endpoint that serves as a streaming bridge. When you request to play the video on Kodi, accessing this endpoint triggers the download of the requested video chunks directly from Telegram. As each chunk is downloaded, it is immediately forwarded to your Kodi instance, enabling seamless streaming of large files without requiring the entire video to be stored on the bot's machine. This approach allows kodibot to efficiently handle large media files while maintaining minimal storage overhead.
+When kodibot receives a video file from Telegram, it creates a unique HTTP endpoint that serves as a streaming bridge. Immediately after that the bot sends a command to Kodi to play the video hosted on that endpoint. Accessing this endpoint triggers the download of the requested video chunks directly from Telegram. As each chunk is downloaded, it is immediately forwarded to the client (i.e. your Kodi instance), enabling seamless streaming of large files without requiring to download the entire video to the bot's machine first.
 
 kodibot uses **TDLib** (Telegram Database Library) for all communication with Telegram, which is the same library used by the official Telegram client. Because of this, data caching is provided in exactly the same way the official Telegram client implements it, ensuring reliable and efficient media handling.
