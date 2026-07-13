@@ -8,7 +8,7 @@ Description=Kodibot Container
 
 [Container]
 ContainerName=kodibot
-AutoUpdate=registry
+Pull=newer
 
 # Do not change these values
 Image=ghcr.io/sigasigasiga/kodibot:main
