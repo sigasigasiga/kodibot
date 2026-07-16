@@ -15,7 +15,7 @@ Image=ghcr.io/sigasigasiga/kodibot:main
 Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --public-host 0.0.0.0
 
 # Volumes
-Volume=kodibot-tdlib:/tdlib-db
+Volume=kodibot-tdlib:/tdlib-db:U
 
 # Credentials
 Secret=kodibot-credentials,type=mount,target=/var/lib/kodibot/kodibot.conf
@@ -26,7 +26,9 @@ Network=bridge
 PublishPort=127.0.0.1:9988:9988
 AddHost=host.containers.internal:host-gateway
 
-UserNS=keep-id:uid=1000,gid=1000
+# Hardening. Do not change these values if you don't know what you are doing
+UserNS=auto:size=2048
+User=1000:1000
 
 [Quadlet]
 # FIXME: figure out why it is so slow without it

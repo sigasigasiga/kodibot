@@ -132,6 +132,17 @@ systemctl --user start kodibot
 systemctl --user status kodibot
 ```
 
+#### Troubleshooting
+
+1. **Error: creating container storage: not enough unused IDs in user namespace**
+
+You don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
+
+You can allocate more by editing `/etc/subuid` and `/etc/subgid` and adding a line to both of these files like:
+```
+<YOUR_USERNAME_HERE>:524288:262144
+```
+
 # Security Notes
 
 - Use the `telegram-user-whitelist` to restrict bot access to trusted users only
