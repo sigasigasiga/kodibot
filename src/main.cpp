@@ -124,10 +124,10 @@ public:
         td_api::int32 api_id,
         std::string api_hash,
         std::string bot_token,
-        int http_port,
+        std::string http_server_address,
+        std::uint16_t http_server_port,
         std::unordered_set<std::int64_t> user_whitelist,
-        kodibot::kodi::connection kodi_conn,
-        std::string public_host
+        kodibot::kodi::connection kodi_conn
     )
         : m_client(m_client_manager.make_client())
         , m_state(
@@ -136,10 +136,10 @@ public:
               make_auth_params(api_id, std::move(api_hash), std::move(db_path)),
               std::move(bot_token)
           )
-        , m_http_port(http_port)
+        , m_http_server_address(std::move(http_server_address))
+        , m_http_server_port(http_server_port)
         , m_kodi_enabled(!kodi_conn.host.empty())
         , m_kodi(std::move(kodi_conn))
-        , m_public_host(std::move(public_host))
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
         set_db_cleanup_options(m_client, db_size_kb);
@@ -167,9 +167,9 @@ public:
 
     void run() {
         m_http_thread = std::thread([this] {
-            spdlog::info("HTTP server listening on {}:{}", m_public_host, m_http_port);
-            if (!m_server.listen(m_public_host, m_http_port)) {
-                spdlog::error("HTTP server failed to bind to port {}", m_http_port);
+            spdlog::info("HTTP server listening on {}:{}", m_http_server_address, m_http_server_port);
+            if (!m_server.listen(m_http_server_address, m_http_server_port)) {
+                spdlog::error("HTTP server failed to bind to port {}", m_http_server_port);
                 m_client_manager.stop();
             }
         });
@@ -229,7 +229,7 @@ private:
             file_id, size, info.mime_type, info.supports_streaming
         );
 
-        return std::format("http://{}:{}/videos/{}", m_public_host, m_http_port, file_id);
+        return std::format("http://{}:{}/videos/{}", m_http_server_address, m_http_server_port, file_id);
     }
 
     // kodibot::bot::bot::player
@@ -384,7 +384,8 @@ private:
     kodibot::telegram::client &m_client;
     state_type m_state;
 
-    int m_http_port;
+    std::string m_http_server_address;
+    std::uint16_t m_http_server_port;
     httplib::Server m_server;
     std::thread m_http_thread;
 
@@ -393,7 +394,6 @@ private:
 
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
-    std::string m_public_host;
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
@@ -469,12 +469,12 @@ int main(int argc, char **argv) {
     std::string api_hash;
     std::string token;
     std::string whitelist_str;
-    int http_port = 9988;
-    std::string kodi_host;
-    int kodi_port = 8080;
+    std::string http_server_address;
+    std::uint16_t http_server_port = 0;
+    std::string kodi_address;
+    std::uint16_t kodi_port = 0;
     std::string kodi_username;
     std::string kodi_password;
-    std::string public_host;
 
     using namespace std::string_view_literals;
 
@@ -488,10 +488,12 @@ int main(int argc, char **argv) {
         ("version,v", "Show version and exit.")
         ("log-level", po::value<spdlog::level::level_enum>(&log_level)->default_value(spdlog::level::info, "info"),
          log_level_option_msg.c_str())
+
         ("telegram-db-path", po::value<std::string>(&db_path)->required(),
          "Telegram database path")
         ("telegram-db-size", po::value<td_api::int64>(&db_size_kb)->default_value(10 * 1024 * 1024), /* 10 GB */
          "Telegram database size in kilobytes")
+
         ("telegram-api-id", po::value<td_api::int32>(&api_id)->required(),
          "Telegram API id.")
         ("telegram-api-hash", po::value<std::string>(&api_hash)->required(),
@@ -501,20 +503,21 @@ int main(int argc, char **argv) {
         ("telegram-user-whitelist", po::value<std::string>(&whitelist_str),
          "Comma-separated list of allowed Telegram user IDs, "
          "e.g. \"123456789,987654321\".")
-        ("http-port", po::value<int>(&http_port)->default_value(http_port),
+
+        ("http-server-address", po::value<std::string>(&http_server_address)->default_value("127.0.0.1"),
+         "Address Kodi uses to reach this bot's HTTP server ")
+        ("http-server-port", po::value<std::uint16_t>(&http_server_port)->default_value(9988),
          "Port the bot's HTTP server listens on.")
-        ("kodi-host", po::value<std::string>(&kodi_host),
+
+        ("kodi-address", po::value<std::string>(&kodi_address)->default_value("127.0.0.1"),
          "Kodi host. Enables playback: received videos are sent to the Kodi "
          "JSON-RPC interface at kodi-host:kodi-port.")
-        ("kodi-port", po::value<int>(&kodi_port)->default_value(kodi_port),
+        ("kodi-port", po::value<std::uint16_t>(&kodi_port)->default_value(8080),
          "Kodi JSON-RPC port.")
         ("kodi-username", po::value<std::string>(&kodi_username),
          "Kodi JSON-RPC username.")
         ("kodi-password", po::value<std::string>(&kodi_password),
          "Kodi JSON-RPC password.")
-        ("public-host", po::value<std::string>(&public_host),
-         "Address Kodi uses to reach this bot's HTTP server "
-         "(defaults to the local hostname).")
     ;
 
     const std::string_view exe_name = argc > 0 ? argv[0] : "kodibot";
@@ -557,31 +560,17 @@ int main(int argc, char **argv) {
     }
 
     kodibot::kodi::connection kodi_conn;
-    kodi_conn.host = kodi_host;
+    kodi_conn.host = kodi_address;
     kodi_conn.port = kodi_port;
     kodi_conn.username = std::move(kodi_username);
     kodi_conn.password = std::move(kodi_password);
 
     if (kodi_conn.host.empty()) {
         spdlog::warn(
-            "KODI_HOST is not set; Kodi playback is disabled. "
-            "Videos will still be served over HTTP. Pass a Kodi host to enable playback."
+            "Kodi address is not set; Kodi playback is disabled. "
+            "Videos will still be served over HTTP. Pass a Kodi address to enable playback."
         );
     } else {
-        if (public_host.empty()) {
-            std::array<char, 256> hostname{};
-            if (gethostname(hostname.data(), hostname.size() - 1) == 0) {
-                public_host = hostname.data();
-            }
-            if (public_host.empty()) {
-                public_host = "localhost";
-            }
-            spdlog::warn(
-                "KODIBOT_PUBLIC_HOST is not set; defaulting to '{}'. "
-                "Kodi must be able to reach this bot's HTTP server at that address.",
-                public_host
-            );
-        }
         spdlog::info("Kodi playback enabled (target {}:{}).", kodi_conn.host, kodi_conn.port);
     }
 
@@ -591,10 +580,10 @@ int main(int argc, char **argv) {
         api_id,
         std::move(api_hash),
         std::move(token),
-        http_port,
+        std::move(http_server_address),
+        http_server_port,
         std::move(user_whitelist),
-        std::move(kodi_conn),
-        std::move(public_host)
+        std::move(kodi_conn)
     );
 
     g_app = &bot;

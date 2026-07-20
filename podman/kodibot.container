@@ -12,7 +12,7 @@ Pull=newer
 
 # Do not change these values
 Image=ghcr.io/sigasigasiga/kodibot:main
-Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --public-host 0.0.0.0
+Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --http-server-address 0.0.0.0
 
 # Volumes
 Volume=kodibot-tdlib:/tdlib-db:U
