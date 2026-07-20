@@ -86,12 +86,41 @@ void print_help(const boost::program_options::options_description &options) {
     std::cout << "Usage: kodibot [options]\n" << options << std::endl;
 }
 
+void set_db_cleanup_options(kodibot::telegram::client &client, td_api::int64 db_size_kb) {
+    client.send_request(
+        td_api::make_object<td_api::setOption>(
+            "storage_max_files_size", /* in kilobytes */
+            td_api::make_object<td_api::optionValueInteger>(db_size_kb)
+        ),
+        nullptr
+    );
+
+    // if we make this value configurable, some may fuck the bot up by setting it
+    // too low and then complaining that the playback crashes arbitrarily
+    client.send_request(
+        td_api::make_object<td_api::setOption>(
+            "storage_immunity_delay", /* in seconds */
+            td_api::make_object<td_api::optionValueInteger>(60 * 60 * 24 * 1) /* 1 day */
+        ),
+        nullptr
+    );
+
+    client.send_request(
+        td_api::make_object<td_api::setOption>(
+            "use_storage_optimizer",
+            td_api::make_object<td_api::optionValueBoolean>(true)
+        ),
+        nullptr
+    );
+}
+
 class kodibot_app : private kodibot::bot::bot::hoster
                   , private kodibot::bot::bot::player
 {
 public:
     kodibot_app(
         std::string db_path,
+        td_api::int64 db_size_kb,
         td_api::int32 api_id,
         std::string api_hash,
         std::string bot_token,
@@ -113,6 +142,8 @@ public:
         , m_public_host(std::move(public_host))
     {
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
+        set_db_cleanup_options(m_client, db_size_kb);
+
         setup_http_routes();
 
         get<0>(m_state).start(
@@ -433,6 +464,7 @@ int main(int argc, char **argv) {
 
     spdlog::level::level_enum log_level = spdlog::level::info;
     std::string db_path;
+    td_api::int64 db_size_kb = 0;
     td_api::int32 api_id = 0;
     std::string api_hash;
     std::string token;
@@ -458,6 +490,8 @@ int main(int argc, char **argv) {
          log_level_option_msg.c_str())
         ("telegram-db-path", po::value<std::string>(&db_path)->required(),
          "Telegram database path")
+        ("telegram-db-size", po::value<td_api::int64>(&db_size_kb)->default_value(10 * 1024 * 1024), /* 10 GB */
+         "Telegram database size in kilobytes")
         ("telegram-api-id", po::value<td_api::int32>(&api_id)->required(),
          "Telegram API id.")
         ("telegram-api-hash", po::value<std::string>(&api_hash)->required(),
@@ -553,6 +587,7 @@ int main(int argc, char **argv) {
 
     kodibot_app bot(
         std::move(db_path),
+        db_size_kb,
         api_id,
         std::move(api_hash),
         std::move(token),
