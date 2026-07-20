@@ -168,7 +168,7 @@ public:
     void run() {
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server listening on 0.0.0.0:{}", m_http_port);
-            if (!m_server.listen("0.0.0.0", m_http_port)) {
+            if (!m_server.listen(m_public_host, m_http_port)) {
                 spdlog::error("HTTP server failed to bind to port {}", m_http_port);
                 m_client_manager.stop();
             }
