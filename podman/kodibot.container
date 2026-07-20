@@ -31,8 +31,9 @@ UserNS=auto:size=2048
 User=1000:1000
 
 [Quadlet]
-# FIXME: figure out why it is so slow without it
-DefaultDependencies=false
+# NB: may cause some slowdown on startup, but is required for the container to start properly
+# https://github.com/podman-container-tools/podman/issues/24796
+DefaultDependencies=true
 
 [Install]
 WantedBy=default.target
