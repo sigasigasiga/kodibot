@@ -1,21 +1,25 @@
 find_package(Git QUIET)
 
-if (Git_FOUND)
+if (DEFINED KODIBOT_VERSION)
+    message(STATUS "Using predefined KODIBOT_VERSION: ${KODIBOT_VERSION}")
+elseif (Git_FOUND)
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags
+        COMMAND ${GIT_EXECUTABLE} describe --always
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         OUTPUT_VARIABLE KODIBOT_VERSION
         OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
         RESULT_VARIABLE GIT_DESCRIBE_RESULT
     )
     if (NOT GIT_DESCRIBE_RESULT EQUAL 0)
-        # TODO: log the warning
-        set(KODIBOT_VERSION "0.0-UNKNOWN")
+        message(WARNING "`git describe` command failed with exit code ${GIT_DESCRIBE_RESULT}")
     endif()
 else()
-    # TODO: log the warning
-    set(KODIBOT_VERSION "0.0-UNKNOWN")
+    message(WARNING "Unable to determine version number")
+endif()
+
+if (NOT KODIBOT_VERSION)
+    message(WARNING "Version number is not available. Using default version: v0.0.0-UNKNOWN")
+    set(KODIBOT_VERSION "v0.0.0-UNKNOWN")
 endif()
 
 configure_file(

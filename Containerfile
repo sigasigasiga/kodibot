@@ -1,5 +1,3 @@
-ARG BUILD_TYPE=RelWithDebInfo
-
 # TDLIB BUILDER ================================================================
 FROM alpine:latest AS tdlib_builder
 
@@ -15,11 +13,8 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build --parallel `nproc` && \
     cmake --install build --prefix /usr/local
 
-#### KODIBOT BUILDER ===========================================================
+# KODIBOT BUILDER ==============================================================
 FROM alpine:latest AS kodibot_builder
-
-# Inherit global build args
-ARG BUILD_TYPE
 
 # kodibot build essentials
 RUN apk add --no-cache build-base clang22 clang22-extra-tools cmake ninja-build
@@ -34,13 +29,20 @@ WORKDIR /source
 COPY --parents ./CMakeLists.txt ./src/ ./third_party/  /source/
 COPY --from=tdlib_builder /usr/local /usr/local
 
+ARG BUILD_TYPE=RelWithDebInfo
+ARG VERSION=v0.0.0-UNKNOWN
+
 RUN --mount=type=cache,target=/source/build \
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' && \
+    cmake \
+        -S . -B build \
+        -G Ninja -DCMAKE_MAKE_PROGRAM='/usr/lib/ninja-build/bin/ninja' \
+        -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+        -DKODIBOT_VERSION=${VERSION} && \
     cmake --build build --parallel `nproc` && \
     cp build/src/kodibot.x /usr/local/bin/kodibot && \
-    echo 'Build finished, artifact at /out/kodibot.x'
+    echo 'Build finished, artifact at /usr/local/bin/kodibot'
 
-#### RUNTIME ===================================================================
+# RUNTIME ======================================================================
 FROM alpine:latest AS runtime
 
 RUN apk add --no-cache openssl zstd boost-program_options spdlog
