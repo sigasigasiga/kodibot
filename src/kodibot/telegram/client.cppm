@@ -7,6 +7,8 @@ module;
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
 
+#include <spdlog/spdlog.h>
+
 export module kodibot.telegram:client;
 
 export import :receiver;
@@ -117,14 +119,17 @@ void client::on_response(
         }
     }
 
-    // NB: callback must not be invoked under the lock because it may call `send_request`
+    // NB 1: callback must not be invoked under the lock because it may call `send_request`
     // and lock the mutex again, which is UB.
+    // NB 2: `cb` may be empty if the user didn't provide a callback for this request,
+    // meaning they don't care about the response. In that case, we just ignore it.
     if (cb) {
         std::invoke(std::move(cb), std::move(object));
     }
 }
 
 void client::on_update(td::td_api::object_ptr<td::td_api::Object> update) {
+    spdlog::trace("Received update: {}", update->get_id());
     m_update_signal(*update);
 }
 

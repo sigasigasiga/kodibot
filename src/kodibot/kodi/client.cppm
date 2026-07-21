@@ -68,17 +68,23 @@ std::expected<void, std::string> client::play(std::string_view url) {
         R"({{"jsonrpc":"2.0","id":1,"method":"Player.Open","params":{{"item":{{"file":"{}"}}}}}})",
         json_escape(url));
 
+    spdlog::trace("Kodi request body: {}", body);
+
     httplib::Client http(m_conn.host, m_conn.port);
     if (!m_conn.username.empty()) {
         http.set_basic_auth(m_conn.username, m_conn.password);
     }
 
+    spdlog::trace("Connecting to Kodi at {}:{}", m_conn.host, m_conn.port);
     auto res = http.Post("/jsonrpc", body, "application/json");
     if (!res) {
         return std::unexpected(spdlog::fmt_lib::format(
             "no response from Kodi at {}:{} ({})",
             m_conn.host, m_conn.port, httplib::to_string(res.error())));
     }
+
+    spdlog::trace("Kodi HTTP response: {} - {}", res->status, res->body);
+
     if (res->status != 200) {
         return std::unexpected(spdlog::fmt_lib::format(
             "Kodi returned HTTP {}: {}", res->status, res->body));

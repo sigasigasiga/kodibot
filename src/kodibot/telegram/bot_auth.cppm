@@ -62,6 +62,7 @@ bot_auth::bot_auth(
 }
 
 void bot_auth::start(callback_type cb) {
+    spdlog::info("Starting Telegram bot authentication");
     m_callback = std::move(cb);
     m_client.send_request(td::td_api::make_object<td::td_api::getOption>("version"), nullptr);
 }
@@ -73,34 +74,35 @@ void bot_auth::on_update(td::td_api::Object &update) {
 
     auto &auth_state = static_cast<td::td_api::updateAuthorizationState &>(update);
 
-    // TODO: remove most of the log messages
     td::td_api::downcast_call(
         *auth_state.authorization_state_,
         grace::fn::bind::overload{
             [this](td::td_api::authorizationStateReady &) {
+                spdlog::trace("Authorization state: READY");
                 m_client.post(std::bind_front(std::move(m_callback), std::ref(m_client), nullptr));
-                spdlog::info("Bot is online and ready to echo messages.");
             },
             [this](td::td_api::authorizationStateLoggingOut &) {
-                spdlog::info("Logging out...");
+                spdlog::trace("Authorization state: LOGGING_OUT");
             },
             [](td::td_api::authorizationStateClosing &) {
-                spdlog::info("Closing...");
+                spdlog::trace("Authorization state: CLOSING");
             },
             [this](td::td_api::authorizationStateClosed &) {
-                spdlog::info("TDLib instance terminated.");
+                spdlog::trace("Authorization state: CLOSED");
             },
             [this](td::td_api::authorizationStateWaitPhoneNumber &) {
+                spdlog::trace("Authorization state: WAIT_PHONE_NUMBER");
                 m_client.send_request(
                     td::td_api::make_object<td::td_api::checkAuthenticationBotToken>(m_bot_token),
                     make_auth_handler()
                 );
             },
             [this](td::td_api::authorizationStateWaitTdlibParameters &) {
+                spdlog::trace("Authorization state: WAIT_TDLIB_PARAMETERS");
                 m_client.send_request(std::move(m_auth), make_auth_handler());
             },
             [](td::td_api::AuthorizationState &upd) {
-                spdlog::warn("unexpected auth state: {}", upd.get_id());
+                spdlog::warn("Unexpected authorization state: {}", upd.get_id());
             },
         });
 }

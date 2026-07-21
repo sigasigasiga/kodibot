@@ -87,6 +87,8 @@ void print_help(const boost::program_options::options_description &options) {
 }
 
 void set_db_cleanup_options(kodibot::telegram::client &client, td_api::int64 db_size_kb) {
+    spdlog::trace("Enabling storage_optimizer...");
+
     client.send_request(
         td_api::make_object<td_api::setOption>(
             "storage_max_files_size", /* in kilobytes */
@@ -141,6 +143,7 @@ public:
         , m_kodi_enabled(!kodi_conn.host.empty())
         , m_kodi(std::move(kodi_conn))
     {
+        spdlog::debug("Initializing kodibot application");
         td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
         set_db_cleanup_options(m_client, db_size_kb);
 
@@ -153,7 +156,7 @@ public:
                     spdlog::error("Authentication failed: {}", to_string(*error));
                     m_client_manager.stop();
                 } else {
-                    spdlog::info("Bot is online and ready.");
+                    spdlog::info("Bot authenticated successfully");
                     m_state.emplace<1>(
                         static_cast<kodibot::bot::bot::hoster &>(*this),
                         static_cast<kodibot::bot::bot::player &>(*this),
@@ -167,25 +170,33 @@ public:
 
     void run() {
         m_http_thread = std::thread([this] {
-            spdlog::info("HTTP server listening on {}:{}", m_http_server_address, m_http_server_port);
+            spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_address, m_http_server_port);
             if (!m_server.listen(m_http_server_address, m_http_server_port)) {
-                spdlog::error("HTTP server failed to bind to port {}", m_http_server_port);
+                spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_address, m_http_server_port);
                 m_client_manager.stop();
+            } else {
+                spdlog::info("HTTP server shutdown");
             }
         });
 
+        spdlog::info("Starting TDLib client manager");
         m_client_manager.run();
 
         spdlog::info("Shutting down...");
         m_server.stop();
         if (m_http_thread.joinable()) {
+            spdlog::debug("Waiting for HTTP server thread to finish");
             m_http_thread.join();
+            spdlog::debug("HTTP server thread finished");
         }
+        spdlog::info("Shutdown complete");
     }
 
     void stop() {
+        spdlog::info("Stopping the bot");
         m_client_manager.stop();
         m_server.stop();
+        spdlog::info("The bot has been stopped");
     }
 
 private:
@@ -197,6 +208,8 @@ private:
     };
 
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
+        auto func_id = f->get_id();
+        spdlog::trace("Sending synchronous request: {}", func_id);
         auto promise = std::make_shared<std::promise<td_api::object_ptr<td_api::Object>>>();
         auto future = promise->get_future();
         m_client.send_request(std::move(f), [promise](td_api::object_ptr<td_api::Object> obj) mutable {
@@ -235,6 +248,7 @@ private:
     // kodibot::bot::bot::player
     void play(std::string url) final {
         if (!m_kodi_enabled) {
+            spdlog::trace("Kodi is not enabled, skipping playback of {}", url);
             return;
         }
 
@@ -246,6 +260,8 @@ private:
             spdlog::info("Asking Kodi to play {}", url);
             if (auto result = m_kodi.play(url); !result) {
                 spdlog::error("Kodi playback failed: {}", result.error());
+            } else {
+                spdlog::info("Kodi playback initiated successfully");
             }
         }).detach();
     }
@@ -256,9 +272,12 @@ private:
             try {
                 file_id = static_cast<td_api::int32>(std::stoi(req.matches[1].str()));
             } catch (...) {
+                spdlog::warn("Invalid file_id in request: {}", req.matches[1].str());
                 res.status = 400;
                 return;
             }
+
+            spdlog::trace("Got HTTP request for video {}", file_id);
 
             std::optional<video_info> info;
             {
@@ -267,7 +286,9 @@ private:
                     info = it->second;
                 }
             }
+
             if (!info) {
+                spdlog::warn("Video {} not found in registry", file_id);
                 res.status = 404;
                 return;
             }
@@ -281,12 +302,16 @@ private:
     }
 
     void serve_seekable(httplib::Response &res, video_info info) {
+        spdlog::debug("Setting up seekable streaming for file_id={}, total_size={}", info.file_id, info.size);
+
         res.set_content_provider(
             static_cast<size_t>(info.size),
             info.mime_type,
             [this, info](size_t offset, size_t length, httplib::DataSink &sink) -> bool {
                 constexpr size_t kChunkSize = 256 * 1024;
                 const auto to_fetch = static_cast<td_api::int53>(std::min(length, kChunkSize));
+
+                spdlog::trace("Fetching chunk: offset={}, length={}, to_fetch={}", offset, length, to_fetch);
 
                 auto dl_req = td_api::make_object<td_api::downloadFile>();
                 dl_req->file_id_ = info.file_id;
@@ -305,16 +330,17 @@ private:
 
                 auto file = td::move_tl_object_as<td_api::file>(dl_result);
                 if (!file->local_ || file->local_->path_.empty()) {
-                    spdlog::warn(
+                    spdlog::error(
                         "no local path for file_id={} at offset={}",
                         info.file_id, offset
                     );
                     return false;
                 }
 
+                spdlog::trace("Opening file for reading: {}", file->local_->path_);
                 std::ifstream in(file->local_->path_, std::ios::binary);
                 if (!in) {
-                    spdlog::warn(
+                    spdlog::error(
                         "failed to open {} for file_id={}",
                         file->local_->path_, info.file_id
                     );
@@ -326,32 +352,44 @@ private:
                 in.read(buf.data(), to_fetch);
                 const auto n = in.gcount();
                 if (n <= 0) {
+                    spdlog::warn("Read returned {} bytes at offset={}", n, offset);
                     return false;
                 }
+
+                spdlog::trace("Sending {} bytes for file_id={}", n, info.file_id);
                 return sink.write(buf.data(), static_cast<size_t>(n));
             });
     }
 
     void serve_non_seekable(httplib::Response &res, video_info info) {
+        spdlog::debug("Setting up non-seekable streaming for file_id={}", info.file_id);
+
         auto dl_req = td_api::make_object<td_api::downloadFile>();
         dl_req->file_id_ = info.file_id;
         dl_req->priority_ = 1;
         dl_req->offset_ = 0;
         dl_req->limit_ = 0;
         dl_req->synchronous_ = true;
+
+        spdlog::trace("Downloading complete file for file_id={}", info.file_id);
         auto dl_result = send_query_sync(std::move(dl_req));
         if (!dl_result || dl_result->get_id() != td_api::file::ID) {
-            res.status = 500;
-            return;
-        }
-        auto file = td::move_tl_object_as<td_api::file>(dl_result);
-        if (!file->local_ || file->local_->path_.empty()) {
+            spdlog::error("downloadFile failed for file_id={}", info.file_id);
             res.status = 500;
             return;
         }
 
+        auto file = td::move_tl_object_as<td_api::file>(dl_result);
+        if (!file->local_ || file->local_->path_.empty()) {
+            spdlog::error("no local path for file_id={}", info.file_id);
+            res.status = 500;
+            return;
+        }
+
+        spdlog::debug("Opening file for non-seekable streaming: {}", file->local_->path_);
         auto in = std::make_shared<std::ifstream>(file->local_->path_, std::ios::binary);
         if (!*in) {
+            spdlog::error("failed to open {} for file_id={}", file->local_->path_, info.file_id);
             res.status = 500;
             return;
         }
@@ -451,7 +489,9 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
 
 kodibot_app *g_app = nullptr;
 
-extern "C" void handle_termination_signal(int /*signum*/) {
+extern "C" void handle_termination_signal(int signum) {
+    // FIXME: these are not async-signal-safe
+    spdlog::info("Received termination signal {}", signum);
     if (g_app) {
         g_app->stop();
     }

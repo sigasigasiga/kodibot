@@ -7,6 +7,8 @@ module;
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
 
+#include <spdlog/spdlog.h>
+
 export module kodibot.telegram:client_manager;
 
 import :client;
@@ -51,6 +53,7 @@ client &client_manager::make_client() {
 }
 
 void client_manager::run() {
+    spdlog::debug("TDLib event loop started");
     while (!m_stop.stop_requested()) {
         auto resp = m_client_manager.receive(1);
         if (!resp.object) {
@@ -59,6 +62,7 @@ void client_manager::run() {
 
         auto it = m_clients.find(resp.client_id);
         if (it == m_clients.end()) {
+            spdlog::error("Received event for unknown client_id: {}", resp.client_id);
             assert(false);
             continue;
         }
@@ -69,9 +73,11 @@ void client_manager::run() {
             it->second->on_response(resp.request_id, std::move(resp).object);
         }
     }
+    spdlog::info("TDLib event loop stopped");
 }
 
 void client_manager::stop() {
+    spdlog::info("Stopping TDLib client manager...");
     m_stop.request_stop();
 
     // funny way to wake up the event loop :)
@@ -84,6 +90,7 @@ void client_manager::send_request(
     td::ClientManager::RequestId request_id,
     td::td_api::object_ptr<td::td_api::Function> f
 ) {
+    spdlog::trace("Sending request: client_id={}, request_id={}, function_id={}", id, request_id, f->get_id());
     m_client_manager.send(id, request_id, std::move(f));
 }
 

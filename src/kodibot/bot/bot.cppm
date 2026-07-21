@@ -99,36 +99,36 @@ void bot::on_update(td::td_api::Object &update) {
 
 void bot::on_new_message(td::td_api::message &message) {
     if (message.is_outgoing_) {
+        spdlog::trace("Ignoring outgoing message (chat_id={})", message.chat_id_);
         return;
     }
 
-    if (message.sender_id_->get_id() != td::td_api::messageSenderUser::ID) {
+    auto sender = telegram::downcast<td::td_api::messageSenderUser *>(message.sender_id_.get());
+    if (!sender) {
+        return spdlog::debug("Got message from non-user sender (sender_id={}). Skipping.", message.sender_id_->get_id());
     }
 
-    if (auto sender = telegram::downcast<td::td_api::messageSenderUser *>(message.sender_id_.get())) {
-        auto const id = sender->user_id_;
-        if (!m_whitelist.contains(id)) {
-            spdlog::warn(
-                "Dropping message from non-whitelisted sender (user_id={}, chat_id={})",
-                id,
-                message.chat_id_
-            );
-            return;
-        }
-    } else {
-        spdlog::trace("Got message from something other than a user. Skipping.");
-        return;
+    const auto id = sender->user_id_;
+    if (!m_whitelist.contains(id)) {
+        return spdlog::warn(
+            "Dropping message from non-whitelisted sender (user_id={}, chat_id={})",
+            id,
+            message.chat_id_
+        );
     }
 
     if (message.date_ < m_start_time) {
-        spdlog::debug("Dropping message sent while offline (date={}, started={})", message.date_, m_start_time);
-        return;
+        return spdlog::debug("Dropping message sent while offline (date={}, started={})", message.date_, m_start_time);
     }
+
+    spdlog::debug("Processing message from whitelisted user (user_id={}, chat_id={})...", id, message.chat_id_);
 
     td::td_api::downcast_call(*message.content_, grace::fn::bind::overload{
         [this](td::td_api::messageVideo &m) {
             if (m.video_) {
                 process_video(*m.video_);
+            } else {
+                spdlog::debug("Video message with null video object received");
             }
         },
         [](td::td_api::MessageContent &m) {
@@ -140,8 +140,17 @@ void bot::on_new_message(td::td_api::message &message) {
 void bot::process_video(td::td_api::video &video) {
     auto size = video.video_->size_;
     if (size == 0) {
+        spdlog::debug("Video size is 0, using expected_size={}", video.video_->expected_size_);
         size = video.video_->expected_size_;
     }
+
+    spdlog::info(
+        "Processing video: file_id={}, size={}, mime_type={}, supports_streaming={}",
+        video.video_->id_,
+        size,
+        video.mime_type_,
+        video.supports_streaming_
+    );
 
     auto url = m_hoster.host_video(
         video.video_->id_,
