@@ -1,5 +1,6 @@
 add_subdirectory(bot)
 add_subdirectory(kodi)
+add_subdirectory(os)
 add_subdirectory(telegram)
 add_subdirectory(util)
 add_subdirectory(version)

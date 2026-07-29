@@ -32,6 +32,7 @@
 import grace;
 import kodibot.bot;
 import kodibot.kodi;
+import kodibot.os;
 import kodibot.telegram;
 import kodibot.util;
 import kodibot.version;
@@ -131,7 +132,8 @@ public:
         std::unordered_set<std::int64_t> user_whitelist,
         kodibot::kodi::connection kodi_conn
     )
-        : m_client(m_client_manager.make_client())
+        : m_signal_monitor{SIGINT, SIGTERM}
+        , m_client(m_client_manager.make_client())
         , m_state(
               std::in_place_index<0>,
               m_client,
@@ -169,34 +171,56 @@ public:
     }
 
     void run() {
+        // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_address, m_http_server_port);
             if (!m_server.listen(m_http_server_address, m_http_server_port)) {
                 spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_address, m_http_server_port);
-                m_client_manager.stop();
-            } else {
-                spdlog::info("HTTP server shutdown");
             }
+
+            spdlog::info("HTTP server thread is shutting down...");
+            stop();
         });
 
-        spdlog::info("Starting TDLib client manager");
-        m_client_manager.run();
+        m_telegram_thread = std::thread([this] {
+            spdlog::info("TDLib client manager starting");
+            m_client_manager.run();
 
-        spdlog::info("Shutting down...");
-        m_server.stop();
-        if (m_http_thread.joinable()) {
-            spdlog::debug("Waiting for HTTP server thread to finish");
-            m_http_thread.join();
-            spdlog::debug("HTTP server thread finished");
+            spdlog::info("TDLib client manager thread is shutting down...");
+
+            stop();
+        });
+
+        if (auto sig = m_signal_monitor.wait()) {
+            spdlog::info("Received signal {}, shutting down", *sig);
+            stop();
+        } else {
+            spdlog::info("Signal monitor got stopped, shutting down");
+
+            // NB: no need to call `stop()` here because the signal monitor
+            // was stopped by `stop()` itself, so the other threads are already shutting down
         }
-        spdlog::info("Shutdown complete");
+
+        m_http_thread.join();
+        m_telegram_thread.join();
+
+        spdlog::info("Shutdown");
     }
 
     void stop() {
-        spdlog::info("Stopping the bot");
-        m_client_manager.stop();
-        m_server.stop();
-        spdlog::info("The bot has been stopped");
+        std::call_once(m_stop_flag, [this] {
+            spdlog::info("Stopping the bot");
+
+            m_signal_monitor.stop();
+            m_client_manager.stop();
+
+            // TODO: if `app.stop()` is called before `m_server.listen()`,
+            // which is theoretically possible, then the app would hang
+            // because `m_server.stop()` doesn't prevent the start of the listening
+            m_server.stop();
+
+            spdlog::info("The bot has been stopped");
+        });
     }
 
 private:
@@ -418,9 +442,13 @@ private:
     >;
 
 private:
+    // it is important that `m_signal_monitor` is created before any other threads
+    kodibot::os::signal_monitor m_signal_monitor;
+
     kodibot::telegram::client_manager m_client_manager;
     kodibot::telegram::client &m_client;
     state_type m_state;
+    std::thread m_telegram_thread;
 
     std::string m_http_server_address;
     std::uint16_t m_http_server_port;
@@ -432,6 +460,8 @@ private:
 
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
+
+    std::once_flag m_stop_flag;
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
@@ -485,16 +515,6 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
         }
     }
     return whitelist;
-}
-
-kodibot_app *g_app = nullptr;
-
-extern "C" void handle_termination_signal(int signum) {
-    // FIXME: these are not async-signal-safe
-    spdlog::info("Received termination signal {}", signum);
-    if (g_app) {
-        g_app->stop();
-    }
 }
 
 }  // namespace
@@ -626,15 +646,7 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    g_app = &bot;
-    std::signal(SIGINT, handle_termination_signal);
-    std::signal(SIGTERM, handle_termination_signal);
-
     bot.run();
-
-    std::signal(SIGTERM, SIG_DFL);
-    std::signal(SIGINT, SIG_DFL);
-    g_app = nullptr;
 
     return 0;
 }
