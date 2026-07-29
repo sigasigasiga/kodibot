@@ -211,7 +211,10 @@ public:
         spdlog::info("Stopping the bot");
         m_signal_monitor.stop();
         m_client_manager.stop();
-        m_server.stop();
+
+        // it fails on an internal `assert` when it is stopped multiple times simultaneously
+        std::call_once(m_server_stop_flag, [this] { m_server.stop(); });
+
         spdlog::info("The bot has been stopped");
     }
 
@@ -444,6 +447,7 @@ private:
 
     std::string m_http_server_address;
     std::uint16_t m_http_server_port;
+    std::once_flag m_server_stop_flag;
     httplib::Server m_server;
     std::thread m_http_thread;
 
