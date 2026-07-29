@@ -68,9 +68,12 @@ public:
         if (fds[0].revents & POLLIN) {
             ::signalfd_siginfo info;
             ::ssize_t n = handle_eintr(::read, m_signal_fd.get(), &info, sizeof(info));
-            if (n != sizeof(info)) {
+            if (n == -1) {
+                throw std::system_error(errno, std::generic_category(), "read(signalfd)");
+            } else if (n != sizeof(info)) {
                 throw std::runtime_error("short read on signalfd");
             }
+
             return static_cast<int>(info.ssi_signo);
         }
 
