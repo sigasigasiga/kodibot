@@ -213,6 +213,10 @@ public:
 
             m_signal_monitor.stop();
             m_client_manager.stop();
+
+            // TODO: if `app.stop()` is called before `m_server.listen()`,
+            // which is theoretically possible, then the app would hang
+            // because `m_server.stop()` doesn't prevent the start of the listening
             m_server.stop();
 
             spdlog::info("The bot has been stopped");
