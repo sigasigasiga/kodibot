@@ -28,8 +28,8 @@ public:
             ::sigaddset(&m_sigset, sig);
         }
 
-        if (::pthread_sigmask(SIG_BLOCK, &m_sigset, nullptr) != 0) {
-            throw std::system_error(errno, std::generic_category(), "pthread_sigmask");
+        if (int err = ::pthread_sigmask(SIG_BLOCK, &m_sigset, nullptr)) {
+            throw std::system_error(err, std::generic_category(), "pthread_sigmask");
         }
 
         m_signal_fd.reset(::signalfd(-1, &m_sigset, SFD_CLOEXEC));
@@ -57,7 +57,8 @@ public:
         if (fds[1].revents & POLLIN) {
             std::uint64_t val;
 
-            if (ssize_t res = handle_eintr(::read, m_stop_fd.get(), &val, sizeof(val))) {
+            ssize_t res = handle_eintr(::read, m_stop_fd.get(), &val, sizeof(val));
+            if (res == -1) {
                 throw std::system_error(errno, std::generic_category(), "read(eventfd)");
             } else {
                 return std::nullopt;
