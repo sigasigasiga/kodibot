@@ -8,6 +8,7 @@ target_sources(
     FILE_SET
     CXX_MODULES FILES
 
+    exception.cppm
     signal.cppm
 
     module.cppm
@@ -19,4 +20,5 @@ target_link_libraries(
     PRIVATE
 
     Boost::headers
+    spdlog::spdlog
 )

@@ -81,8 +81,6 @@ public:
         std::uint64_t one = 1;
         ssize_t n = handle_eintr(::write, m_stop_fd.get(), &one, sizeof(one));
 
-        // TODO: is this a correct error check?
-        // TODO: should we handle EINTR?
         if (n != sizeof(one)) {
             throw std::system_error(errno, std::generic_category(), "write(eventfd)");
         }

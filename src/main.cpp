@@ -170,38 +170,67 @@ public:
         );
     }
 
+    [[nodiscard]] auto make_scoped_stopper() {
+        // TODO: use boost.scope when new boost is available in alpine
+
+        class ret {
+            kodibot_app &m_self;
+
+        public:
+            ret(kodibot_app &self) : m_self(self) {}
+
+            ~ret() {
+                // yes, in case of exception it may also throw and thus call `std::terminate`
+                // but it's the best we can do anyway
+                m_self.stop();
+            }
+        };
+
+        return ret(*this);
+    }
+
     void run() {
-        m_http_thread = std::thread([this] {
+        m_http_future = std::async(std::launch::async, [this] {
+            auto _ = make_scoped_stopper();
+
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_address, m_http_server_port);
+
             if (!m_server.listen(m_http_server_address, m_http_server_port)) {
                 spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_address, m_http_server_port);
             }
 
             spdlog::info("HTTP server thread is shutting down...");
-            stop();
         });
 
-        m_telegram_thread = std::thread([this] {
+        m_telegram_future = std::async(std::launch::async, [this] {
+            auto _ = make_scoped_stopper();
+
             spdlog::info("TDLib client manager starting");
             m_client_manager.run();
 
             spdlog::info("TDLib client manager thread is shutting down...");
-
-            stop();
         });
 
-        if (auto sig = m_signal_monitor.wait()) {
-            spdlog::info("Received signal {}, shutting down", *sig);
-            stop();
-        } else {
-            spdlog::info("Signal monitor got stopped, shutting down");
+        spdlog::info("Start waiting for a signal...");
+        try {
+            if (auto sig = m_signal_monitor.wait()) {
+                spdlog::info("Received signal {}, shutting down", *sig);
+                stop();
+            } else {
+                spdlog::info("Signal monitor got stopped, shutting down");
 
-            // NB: no need to call `stop()` here because the signal monitor
-            // was stopped by `stop()` itself, so the other threads are already shutting down
+                // NB: no need to call `stop()` here because the signal monitor
+                // was stopped by `stop()` itself, so the other threads are already shutting down
+            }
+        } catch(...) {
+            kodibot::util::log_exception("Got an exception from the signal monitor");
         }
 
-        m_http_thread.join();
-        m_telegram_thread.join();
+        spdlog::info("Waiting for http thread to finish...");
+        m_http_future.get();
+
+        spdlog::info("Waiting for telegram thread to finish...");
+        m_telegram_future.get();
 
         spdlog::info("Shutdown");
     }
@@ -439,12 +468,12 @@ private:
     kodibot::telegram::client_manager m_client_manager;
     kodibot::telegram::client &m_client;
     state_type m_state;
-    std::thread m_telegram_thread;
+    std::future<void> m_telegram_future;
 
     std::string m_http_server_address;
     std::uint16_t m_http_server_port;
     httplib::Server m_server;
-    std::thread m_http_thread;
+    std::future<void> m_http_future;
 
     std::mutex m_videos_mutex;
     std::map<td_api::int32, video_info> m_videos;
