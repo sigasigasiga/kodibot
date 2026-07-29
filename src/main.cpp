@@ -171,6 +171,7 @@ public:
     }
 
     void run() {
+        // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_address, m_http_server_port);
             if (!m_server.listen(m_http_server_address, m_http_server_port)) {
