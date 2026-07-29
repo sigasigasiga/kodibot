@@ -57,7 +57,7 @@ public:
         if (fds[1].revents & POLLIN) {
             std::uint64_t val;
 
-            ssize_t res = handle_eintr(::read, m_stop_fd.get(), &val, sizeof(val));
+            ::ssize_t res = handle_eintr(::read, m_stop_fd.get(), &val, sizeof(val));
             if (res == -1) {
                 throw std::system_error(errno, std::generic_category(), "read(eventfd)");
             } else {
@@ -67,7 +67,7 @@ public:
 
         if (fds[0].revents & POLLIN) {
             ::signalfd_siginfo info;
-            ssize_t n = handle_eintr(::read, m_signal_fd.get(), &info, sizeof(info));
+            ::ssize_t n = handle_eintr(::read, m_signal_fd.get(), &info, sizeof(info));
             if (n != sizeof(info)) {
                 throw std::runtime_error("short read on signalfd");
             }
@@ -79,7 +79,7 @@ public:
 
     void stop() {
         std::uint64_t one = 1;
-        ssize_t n = handle_eintr(::write, m_stop_fd.get(), &one, sizeof(one));
+        ::ssize_t n = handle_eintr(::write, m_stop_fd.get(), &one, sizeof(one));
 
         if (n != sizeof(one)) {
             throw std::system_error(errno, std::generic_category(), "write(eventfd)");
@@ -87,7 +87,7 @@ public:
     }
 
 private:
-    sigset_t m_sigset;
+    ::sigset_t m_sigset;
     unique_fd m_signal_fd;
     unique_fd m_stop_fd;
 };
