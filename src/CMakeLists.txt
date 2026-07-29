@@ -15,6 +15,7 @@ target_link_libraries(
 
     kodibot.bot
     kodibot.kodi
+    kodibot.os
     kodibot.telegram
     kodibot.util
     kodibot.version
