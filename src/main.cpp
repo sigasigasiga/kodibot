@@ -127,8 +127,10 @@ public:
         td_api::int32 api_id,
         std::string api_hash,
         std::string bot_token,
-        std::string http_server_address,
-        std::uint16_t http_server_port,
+        std::string http_server_public_address,
+        std::uint16_t http_server_public_port,
+        std::string http_server_bind_address,
+        std::uint16_t http_server_bind_port,
         std::unordered_set<std::int64_t> user_whitelist,
         kodibot::kodi::connection kodi_conn
     )
@@ -140,8 +142,10 @@ public:
               make_auth_params(api_id, std::move(api_hash), std::move(db_path)),
               std::move(bot_token)
           )
-        , m_http_server_address(std::move(http_server_address))
-        , m_http_server_port(http_server_port)
+        , m_http_server_public_address(std::move(http_server_public_address))
+        , m_http_server_public_port(http_server_public_port)
+        , m_http_server_bind_address(std::move(http_server_bind_address))
+        , m_http_server_bind_port(http_server_bind_port)
         , m_kodi_enabled(!kodi_conn.host.empty())
         , m_kodi(std::move(kodi_conn))
     {
@@ -173,9 +177,9 @@ public:
     void run() {
         // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
-            spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_address, m_http_server_port);
-            if (!m_server.listen(m_http_server_address, m_http_server_port)) {
-                spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_address, m_http_server_port);
+            spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_bind_address, m_http_server_bind_port);
+            if (!m_server.listen(m_http_server_bind_address, m_http_server_bind_port)) {
+                spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_bind_address, m_http_server_bind_port);
             }
 
             spdlog::info("HTTP server thread is shutting down...");
@@ -266,7 +270,7 @@ private:
             file_id, size, info.mime_type, info.supports_streaming
         );
 
-        return std::format("http://{}:{}/videos/{}", m_http_server_address, m_http_server_port, file_id);
+        return std::format("http://{}:{}/videos/{}", m_http_server_public_address, m_http_server_public_port, file_id);
     }
 
     // kodibot::bot::bot::player
@@ -450,8 +454,10 @@ private:
     state_type m_state;
     std::thread m_telegram_thread;
 
-    std::string m_http_server_address;
-    std::uint16_t m_http_server_port;
+    std::string m_http_server_public_address;
+    std::uint16_t m_http_server_public_port;
+    std::string m_http_server_bind_address;
+    std::uint16_t m_http_server_bind_port;
     httplib::Server m_server;
     std::thread m_http_thread;
 
@@ -529,8 +535,10 @@ int main(int argc, char **argv) {
     std::string api_hash;
     std::string token;
     std::string whitelist_str;
-    std::string http_server_address;
-    std::uint16_t http_server_port = 0;
+    std::string http_server_public_address;
+    std::string http_server_bind_address;
+    std::uint16_t http_server_bind_port = 0;
+    std::uint16_t http_server_public_port = 0;
     std::string kodi_address;
     std::uint16_t kodi_port = 0;
     std::string kodi_username;
@@ -564,14 +572,21 @@ int main(int argc, char **argv) {
          "Comma-separated list of allowed Telegram user IDs, "
          "e.g. \"123456789,987654321\".")
 
-        ("http-server-address", po::value<std::string>(&http_server_address)->default_value("127.0.0.1"),
-         "Address Kodi uses to reach this bot's HTTP server ")
-        ("http-server-port", po::value<std::uint16_t>(&http_server_port)->default_value(9988),
+        ("http-server-public-address", po::value<std::string>(&http_server_public_address),
+         "Address Kodi uses to reach this bot's HTTP server. Used to build the "
+         "video URLs handed to Kodi, so it must be routable from Kodi's host.")
+        ("http-server-public-port", po::value<std::uint16_t>(&http_server_public_port)->default_value(9988),
+         "Port Kodi uses to reach this bot's HTTP server. Used to build the "
+         "video URLs handed to Kodi, so it must be routable from Kodi's host.")
+
+        ("http-server-bind-address", po::value<std::string>(&http_server_bind_address),
+         "Address the bot's HTTP server binds to")
+        ("http-server-bind-port", po::value<std::uint16_t>(&http_server_bind_port)->default_value(9988),
          "Port the bot's HTTP server listens on.")
 
         ("kodi-address", po::value<std::string>(&kodi_address)->default_value("127.0.0.1"),
          "Kodi host. Enables playback: received videos are sent to the Kodi "
-         "JSON-RPC interface at kodi-host:kodi-port.")
+         "JSON-RPC interface at kodi-address:kodi-port.")
         ("kodi-port", po::value<std::uint16_t>(&kodi_port)->default_value(8080),
          "Kodi JSON-RPC port.")
         ("kodi-username", po::value<std::string>(&kodi_username),
@@ -640,8 +655,10 @@ int main(int argc, char **argv) {
         api_id,
         std::move(api_hash),
         std::move(token),
-        std::move(http_server_address),
-        http_server_port,
+        std::move(http_server_public_address),
+        http_server_public_port,
+        std::move(http_server_bind_address),
+        http_server_bind_port,
         std::move(user_whitelist),
         std::move(kodi_conn)
     );
