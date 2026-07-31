@@ -10,9 +10,11 @@ Description=Kodibot Container
 ContainerName=kodibot
 Pull=newer
 
-# Do not change these values
 Image=ghcr.io/sigasigasiga/kodibot:main
-Exec=--kodi-host host.containers.internal --telegram-db-path /tdlib-db --http-server-address 0.0.0.0
+Exec=--kodi-address host.containers.internal \
+     --telegram-db-path /tdlib-db \
+     --http-server-bind-address 0.0.0.0 \
+     --http-server-public-address 127.0.0.1
 
 # Volumes
 Volume=kodibot-tdlib:/tdlib-db:U
