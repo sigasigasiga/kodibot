@@ -2,6 +2,7 @@ module;
 
 #include <cassert>
 #include <map>
+#include <mutex>
 #include <stop_token>
 
 #include <td/telegram/Client.h>
@@ -34,6 +35,7 @@ private:
     td::ClientManager m_client_manager;
     std::stop_source m_stop;
 
+    std::mutex m_clients_mutex;
     std::map<td::ClientManager::ClientId, std::unique_ptr<receiver>> m_clients;
 };
 
@@ -47,7 +49,10 @@ client &client_manager::make_client() {
 
     auto &c_ref = *c;
 
-    m_clients.emplace(id, std::move(c));
+    {
+        std::lock_guard lock(m_clients_mutex);
+        m_clients.emplace(id, std::move(c));
+    }
 
     return c_ref;
 }
@@ -60,17 +65,24 @@ void client_manager::run() {
             continue;
         }
 
-        auto it = m_clients.find(resp.client_id);
-        if (it == m_clients.end()) {
-            spdlog::error("Received event for unknown client_id: {}", resp.client_id);
-            assert(false);
-            continue;
+        receiver *recv = nullptr;
+        {
+            std::lock_guard lock(m_clients_mutex);
+            auto it = m_clients.find(resp.client_id);
+            if (it == m_clients.end()) {
+                spdlog::error("Received event for unknown client_id: {}", resp.client_id);
+                assert(false);
+                continue;
+            }
+
+            // `recv` will be valid because a client cannot be deleted
+            recv = it->second.get();
         }
 
         if (resp.request_id == 0) {
-            it->second->on_update(std::move(resp).object);
+            recv->on_update(std::move(resp).object);
         } else {
-            it->second->on_response(resp.request_id, std::move(resp).object);
+            recv->on_response(resp.request_id, std::move(resp).object);
         }
     }
     spdlog::info("TDLib event loop stopped");
