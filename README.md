@@ -73,7 +73,7 @@ To use the Telegram Bot API, you need to create an app on **my.telegram.org**:
 
 Currently we have installation instructions only for Linux using Podman.
 
-Note that it is possible to run kodibot on other platforms (including Windows, macOS and Linux using Docker), but you will need to adapt the instructions yourself.
+Note that it is possible to run kodibot using Docker/Podman on other platforms (including Windows, macOS), but you will need to adapt the instructions yourself.
 If you have successfully run kodibot on another platform, please consider contributing your instructions to this README, I'll be happy to include them.
 
 ### Installation on Linux with Podman
