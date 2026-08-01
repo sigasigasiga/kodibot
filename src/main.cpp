@@ -5,6 +5,7 @@
 #include <boost/program_options.hpp>
 #include <httplib.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/ringbuffer_sink.h>
 
 #include <algorithm>
 #include <array>
@@ -68,6 +69,46 @@ void validate(
 } // namespace boost
 
 namespace {
+
+class spdlog_postpone
+{
+public:
+    spdlog_postpone(
+        std::shared_ptr<spdlog::logger> logger,
+        std::size_t ring_buffer_size
+    )
+        : m_logger(std::move(logger))
+        , m_ring_sink(std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(ring_buffer_size))
+        , m_old_sinks(std::exchange(m_logger->sinks(), { m_ring_sink }))
+    {
+        m_logger->set_level(spdlog::level::trace);
+    }
+
+public:
+    void set_log_level(spdlog::level::level_enum level) && {
+        m_logger->set_level(level);
+
+        auto raw_messages = m_ring_sink->last_raw();
+        for (const auto &msg : raw_messages) {
+            if (msg.level >= level) {
+                for (const auto &sink : m_old_sinks) {
+                    sink->log(msg);
+                }
+            }
+        }
+
+        m_logger->sinks() = std::move(m_old_sinks);
+
+        m_logger.reset();
+        m_ring_sink.reset();
+        m_old_sinks.clear();
+    }
+
+private:
+    std::shared_ptr<spdlog::logger> m_logger;
+    std::shared_ptr<spdlog::sinks::ringbuffer_sink_mt> m_ring_sink;
+    std::vector<std::shared_ptr<spdlog::sinks::sink>> m_old_sinks;
+};
 
 auto make_auth_params(td_api::int32 api_id, std::string api_hash, std::string db_path)
 {
@@ -528,6 +569,10 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
 int main(int argc, char **argv) {
     namespace po = boost::program_options;
 
+    spdlog_postpone log_postpone(spdlog::default_logger(), 100);
+
+    spdlog::info("Starting kodibot {}...", kodibot::version::version_string);
+
     spdlog::level::level_enum log_level = spdlog::level::info;
     std::string db_path;
     td_api::int64 db_size_kb = 0;
@@ -612,10 +657,6 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        spdlog::set_level(log_level);
-
-        spdlog::info("Starting kodibot {}...", kodibot::version::version_string);
-
         load_systemd_credentials(options, vm);
         po::notify(vm);
     } catch (const po::error &e) {
@@ -623,6 +664,8 @@ int main(int argc, char **argv) {
         print_help(options);
         return 1;
     }
+
+    std::move(log_postpone).set_log_level(log_level);
 
     auto user_whitelist = parse_user_whitelist(whitelist_str);
     if (user_whitelist.empty()) {
