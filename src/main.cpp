@@ -201,7 +201,7 @@ public:
             (kodibot::telegram::client &client, td::td_api::object_ptr<td::td_api::error> error) mutable {
                 if (error) {
                     spdlog::error("Authentication failed: {}", to_string(*error));
-                    m_client_manager.stop();
+                    stop();
                 } else {
                     spdlog::info("Bot authenticated successfully");
                     m_state.emplace<1>(
