@@ -277,6 +277,11 @@ private:
     };
 
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
+        assert(
+            std::this_thread::get_id() != m_telegram_thread.get_id() &&
+            "send_query_sync cannot be called from the telegram thread"
+        );
+
         auto func_id = f->get_id();
         spdlog::trace("Sending synchronous request: {}", func_id);
         auto promise = std::make_shared<std::promise<td_api::object_ptr<td_api::Object>>>();
