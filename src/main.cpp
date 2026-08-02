@@ -375,7 +375,7 @@ private:
     }
 
     void serve_seekable(httplib::Response &res, video_info info) {
-        spdlog::debug("Setting up seekable streaming for file_id={}, total_size={}", info.file_id, info.size);
+        spdlog::trace("Setting up seekable streaming for file_id={}, total_size={}", info.file_id, info.size);
 
         res.set_content_provider(
             static_cast<size_t>(info.size),
