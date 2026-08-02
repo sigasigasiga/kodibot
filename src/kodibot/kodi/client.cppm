@@ -52,7 +52,7 @@ class client
 public:
     explicit client(connection conn);
 
-    std::expected<void, std::string> play(std::string_view url);
+    std::expected<void, std::string> play(std::string_view url) const;
 
 private:
     connection m_conn;
@@ -63,7 +63,7 @@ client::client(connection conn)
 {
 }
 
-std::expected<void, std::string> client::play(std::string_view url) {
+std::expected<void, std::string> client::play(std::string_view url) const {
     const std::string body = spdlog::fmt_lib::format(
         R"({{"jsonrpc":"2.0","id":1,"method":"Player.Open","params":{{"item":{{"file":"{}"}}}}}})",
         json_escape(url));

@@ -321,13 +321,17 @@ private:
             return;
         }
 
-        // The request runs on a detached thread: this method is called from the client_manager::run()
+        // NB 1: The request runs on a detached thread: this method is called from the client_manager::run()
         // receive loop, but Player.Open can block until Kodi opens the stream, which
         // it does by fetching from our HTTP server thread, which in turn relies on
         // the receive loop to fulfil downloadFile. Blocking here would deadlock.
-        std::thread([this, url = std::move(url)] {
+        //
+        // NB 2: We cannot reference `m_kodi` directly in the lambda because it is a member of `kodibot_app`,
+        // which theoretically may be destroyed before the lambda runs. Since `m_kodi` is
+        // a relatively cheap to copy value type, we can safely copy it into the lambda.
+        std::thread([kodi = m_kodi, url = std::move(url)] {
             spdlog::info("Asking Kodi to play {}", url);
-            if (auto result = m_kodi.play(url); !result) {
+            if (auto result = kodi.play(url); !result) {
                 spdlog::error("Kodi playback failed: {}", result.error());
             } else {
                 spdlog::info("Kodi playback initiated successfully");
