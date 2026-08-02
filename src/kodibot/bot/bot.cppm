@@ -52,11 +52,11 @@ public:
     );
 
 private: // update handlers
-    void on_update(td::td_api::Object &update);
-    void on_new_message(td::td_api::message &message);
+    void on_update(const td::td_api::Object &update);
+    void on_new_message(const td::td_api::message &message);
 
 private:
-    void process_video(td::td_api::video &video);
+    void process_video(const td::td_api::video &video);
 
 private:
     hoster &m_hoster;
@@ -90,20 +90,20 @@ bot::bot(
 #endif // NDEBUG
 }
 
-void bot::on_update(td::td_api::Object &update) {
-    td::td_api::downcast_call(update, grace::fn::bind::overload{
-        [this](td::td_api::updateNewMessage &message) { on_new_message(*message.message_); },
-        [](td::td_api::Object &upd) { spdlog::trace("Unhandled update: {}", upd.get_id()); }
+void bot::on_update(const td::td_api::Object &update) {
+    telegram::downcast_call(update, grace::fn::bind::overload{
+        [this](const td::td_api::updateNewMessage &message) { on_new_message(*message.message_); },
+        [](const td::td_api::Object &upd) { spdlog::trace("Unhandled update: {}", upd.get_id()); }
     });
 }
 
-void bot::on_new_message(td::td_api::message &message) {
+void bot::on_new_message(const td::td_api::message &message) {
     if (message.is_outgoing_) {
         spdlog::trace("Ignoring outgoing message (chat_id={})", message.chat_id_);
         return;
     }
 
-    auto sender = telegram::downcast<td::td_api::messageSenderUser *>(message.sender_id_.get());
+    auto sender = telegram::downcast<const td::td_api::messageSenderUser *>(message.sender_id_.get());
     if (!sender) {
         return spdlog::debug("Got message from non-user sender (sender_id={}). Skipping.", message.sender_id_->get_id());
     }
@@ -123,21 +123,21 @@ void bot::on_new_message(td::td_api::message &message) {
 
     spdlog::debug("Processing message from whitelisted user (user_id={}, chat_id={})...", id, message.chat_id_);
 
-    td::td_api::downcast_call(*message.content_, grace::fn::bind::overload{
-        [this](td::td_api::messageVideo &m) {
+    telegram::downcast_call(*message.content_, grace::fn::bind::overload{
+        [this](const td::td_api::messageVideo &m) {
             if (m.video_) {
                 process_video(*m.video_);
             } else {
                 spdlog::debug("Video message with null video object received");
             }
         },
-        [](td::td_api::MessageContent &m) {
+        [](const td::td_api::MessageContent &m) {
             spdlog::trace("Got message content {}, ignoring...", m.get_id());
         },
     });
 }
 
-void bot::process_video(td::td_api::video &video) {
+void bot::process_video(const td::td_api::video &video) {
     auto size = video.video_->size_;
     if (size == 0) {
         spdlog::debug("Video size is 0, using expected_size={}", video.video_->expected_size_);
