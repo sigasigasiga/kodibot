@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <cassert>
 #include <map>
 #include <mutex>
@@ -94,6 +95,8 @@ void client_manager::stop() {
 
     // funny way to wake up the event loop :)
     make_client().post([] {});
+
+    std::ranges::for_each(m_clients, &receiver::cancel, grace::fn::op::get_value());
 }
 
 // client::delegate

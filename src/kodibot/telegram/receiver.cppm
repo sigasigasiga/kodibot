@@ -19,6 +19,8 @@ public:
     ) = 0;
 
     virtual void on_update(td::td_api::object_ptr<td::td_api::Object> update) = 0;
+
+    virtual void cancel() = 0;
 };
 
 } // namespace kodibot::telegram

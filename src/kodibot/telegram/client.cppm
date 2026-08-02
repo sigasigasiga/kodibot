@@ -3,6 +3,7 @@ module;
 #include <functional>
 #include <map>
 #include <mutex>
+#include <ranges>
 
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
@@ -71,6 +72,8 @@ private: // receiver
 
     void on_update(td::td_api::object_ptr<td::td_api::Object> update) final;
 
+    void cancel() final;
+
 private:
     delegate &m_delegate;
     td::ClientManager::ClientId m_id;
@@ -92,7 +95,7 @@ client::client(delegate &delegate, td::ClientManager::ClientId id)
 void client::send_request(td::td_api::object_ptr<td::td_api::Function> f, callback_type cb) {
     td::ClientManager::RequestId req_id;
     {
-        std::lock_guard lock(m_mutex);
+        auto _ = std::scoped_lock(m_mutex);
         req_id = ++m_request_id;
         if (cb) {
             m_callbacks.emplace(req_id, std::move(cb));
@@ -113,7 +116,7 @@ void client::on_response(
 ) {
     callback_type cb;
     {
-        std::lock_guard lock(m_mutex);
+        auto _ = std::scoped_lock(m_mutex);
         if (auto node = m_callbacks.extract(id)) {
             cb = std::move(node.mapped());
         }
@@ -131,6 +134,21 @@ void client::on_response(
 void client::on_update(td::td_api::object_ptr<td::td_api::Object> update) {
     spdlog::trace("Received update: {}", update->get_id());
     m_update_signal(*update);
+}
+
+void client::cancel() {
+    std::map<td::ClientManager::RequestId, callback_type> callbacks;
+
+    {
+        auto _ = std::scoped_lock(m_mutex);
+        callbacks = std::move(m_callbacks);
+    }
+
+    for (auto &cb : callbacks | std::views::values) {
+        std::invoke(std::move(cb), td::td_api::make_object<td::td_api::error>(406, "Client stopped"));
+    }
+
+    spdlog::debug("Telegram client {} stopped, {} pending requests canceled", m_id, callbacks.size());
 }
 
 } // namespace kodibot::telegram
