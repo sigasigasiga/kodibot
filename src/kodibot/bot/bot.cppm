@@ -48,7 +48,8 @@ public:
         hoster &hoster,
         player &player,
         telegram::client &client,
-        std::unordered_set<td::td_api::int53> whitelist
+        std::unordered_set<td::td_api::int53> whitelist,
+        td::td_api::int64 authorization_date
     );
 
 private: // update handlers
@@ -64,22 +65,42 @@ private:
     telegram::client &m_client;
     util::scoped_connection m_update_connection;
     std::unordered_set<td::td_api::int53> m_whitelist;
-    td::td_api::int32 m_start_time;
+    td::td_api::int64 m_start_time;
 };
 
 bot::bot(
     hoster &hoster,
     player &player,
     telegram::client &client,
-    std::unordered_set<td::td_api::int53> whitelist
+    std::unordered_set<td::td_api::int53> whitelist,
+    td::td_api::int64 authorization_date
 )
     : m_hoster(hoster)
     , m_player(player)
     , m_client(client)
     , m_update_connection(m_client.subscribe(std::bind_front(&bot::on_update, this)))
     , m_whitelist(std::move(whitelist))
-    , m_start_time(static_cast<td::td_api::int32>(std::time(nullptr)))
+    , m_start_time(authorization_date)
 {
+    // what thE FUCK????
+    // does tdlib really use a FUCKING SIGNED 32-BIT INTEGER for the FUCKING TIMESTAMP???????
+    if constexpr (std::same_as<decltype(td::td_api::message::date_), td::td_api::int32>) {
+        if (m_start_time > std::numeric_limits<td::td_api::int32>::max()) {
+            spdlog::warn(
+                "TDLib is prone to the Year 2038 problem, and the authorization date ({}) is "
+                "too large to be represented as a signed 32-bit integer",
+                m_start_time
+            );
+
+            spdlog::warn(
+                "Setting the start time to 0 (epoch) to avoid dropping messages sent before "
+                "the bot started. This may result in a flood of messages being processed."
+            );
+
+            m_start_time = 0;
+        }
+    }
+
 #ifndef NDEBUG
     m_client.send_request(
         td::td_api::make_object<td::td_api::getAuthorizationState>(),
@@ -117,7 +138,7 @@ void bot::on_new_message(const td::td_api::message &message) {
         );
     }
 
-    if (message.date_ < m_start_time) {
+    if (static_cast<td::td_api::int64>(message.date_) < m_start_time) {
         return spdlog::debug("Dropping message sent while offline (date={}, started={})", message.date_, m_start_time);
     }
 

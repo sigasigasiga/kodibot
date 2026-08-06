@@ -197,21 +197,7 @@ public:
         setup_http_routes();
 
         get<0>(m_state).start(
-            [this, whitelist = std::move(user_whitelist)]
-            (kodibot::telegram::client &client, td::td_api::object_ptr<td::td_api::error> error) mutable {
-                if (error) {
-                    spdlog::error("Authentication failed: {}", to_string(*error));
-                    stop();
-                } else {
-                    spdlog::info("Bot authenticated successfully");
-                    m_state.emplace<1>(
-                        static_cast<kodibot::bot::bot::hoster &>(*this),
-                        static_cast<kodibot::bot::bot::player &>(*this),
-                        client,
-                        std::move(whitelist)
-                    );
-                }
-            }
+            std::bind_front(&kodibot_app::on_auth_complete, this, std::move(user_whitelist))
         );
     }
 
@@ -290,6 +276,44 @@ private:
             promise->set_value(std::move(obj));
         });
         return future.get();
+    }
+
+    void on_auth_complete(
+        std::unordered_set<std::int64_t> whitelist,
+        kodibot::telegram::client &client,
+        td::td_api::object_ptr<td::td_api::error> error
+    ) {
+        assert(&m_client == &client);
+
+        if (error) {
+            spdlog::error("Authentication failed: {}", to_string(*error));
+            stop();
+            return;
+        }
+
+        spdlog::info("Bot authenticated successfully");
+        m_client.send_request(
+            td_api::make_object<td_api::getOption>("unix_time"),
+            [this, whitelist = std::move(whitelist)]
+            (td_api::object_ptr<td_api::Object> o) mutable {
+                const auto value = kodibot::telegram::downcast<td_api::optionValueInteger *>(o.get());
+                if (!value) {
+                    spdlog::error("Unexpected response type for unix_time option (id={})", o->get_id());
+                    stop();
+                    return;
+                }
+
+                spdlog::debug("Auth completed at {}", value->value_);
+
+                m_state.emplace<1>(
+                    static_cast<kodibot::bot::bot::hoster &>(*this),
+                    static_cast<kodibot::bot::bot::player &>(*this),
+                    m_client,
+                    std::move(whitelist),
+                    value->value_
+                );
+            }
+        );
     }
 
     // kodibot::bot::bot::hoster
