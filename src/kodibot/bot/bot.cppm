@@ -159,22 +159,28 @@ void bot::on_new_message(const td::td_api::message &message) {
 }
 
 void bot::process_video(const td::td_api::video &video) {
-    auto size = video.video_->size_;
+    if (!video.video_) {
+        spdlog::error("Video message with null video file object received");
+        return;
+    }
+
+    const auto &file = *video.video_;
+    auto size = file.size_;
     if (size == 0) {
-        spdlog::debug("Video size is 0, using expected_size={}", video.video_->expected_size_);
-        size = video.video_->expected_size_;
+        spdlog::debug("Video size is 0, using expected_size={}", file.expected_size_);
+        size = file.expected_size_;
     }
 
     spdlog::info(
         "Processing video: file_id={}, size={}, mime_type={}, supports_streaming={}",
-        video.video_->id_,
+        file.id_,
         size,
         video.mime_type_,
         video.supports_streaming_
     );
 
     auto url = m_hoster.host_video(
-        video.video_->id_,
+        file.id_,
         size,
         video.mime_type_.empty() ? std::string{"video/mp4"} : video.mime_type_,
         video.supports_streaming_
