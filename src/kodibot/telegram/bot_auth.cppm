@@ -82,13 +82,13 @@ void bot_auth::on_update(const td::td_api::Object &update) {
                 spdlog::trace("Authorization state: READY");
                 m_client.post(std::bind_front(std::move(m_callback), std::ref(m_client), nullptr));
             },
-            [this](const td::td_api::authorizationStateLoggingOut &) {
+            [](const td::td_api::authorizationStateLoggingOut &) {
                 spdlog::trace("Authorization state: LOGGING_OUT");
             },
             [](const td::td_api::authorizationStateClosing &) {
                 spdlog::trace("Authorization state: CLOSING");
             },
-            [this](const td::td_api::authorizationStateClosed &) {
+            [](const td::td_api::authorizationStateClosed &) {
                 spdlog::trace("Authorization state: CLOSED");
             },
             [this](const td::td_api::authorizationStateWaitPhoneNumber &) {

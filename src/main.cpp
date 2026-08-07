@@ -407,11 +407,11 @@ private:
         spdlog::trace("Setting up seekable streaming for file_id={}, total_size={}", info.file_id, info.size);
 
         res.set_content_provider(
-            static_cast<size_t>(info.size),
+            static_cast<std::size_t>(info.size),
             info.mime_type,
-            [this, info](size_t offset, size_t length, httplib::DataSink &sink) -> bool {
-                constexpr size_t kChunkSize = 256 * 1024;
-                const auto to_fetch = static_cast<td_api::int53>(std::min(length, kChunkSize));
+            [this, info](std::size_t offset, std::size_t length, httplib::DataSink &sink) -> bool {
+                constexpr std::size_t kChunkSize = 256 * 1024;
+                const auto to_fetch = std::min(length, kChunkSize);
 
                 spdlog::trace("Fetching chunk: offset={}, length={}, to_fetch={}", offset, length, to_fetch);
 
@@ -419,7 +419,7 @@ private:
                 dl_req->file_id_ = info.file_id;
                 dl_req->priority_ = 1;
                 dl_req->offset_ = static_cast<td_api::int53>(offset);
-                dl_req->limit_ = to_fetch;
+                dl_req->limit_ = static_cast<td_api::int53>(to_fetch);
                 dl_req->synchronous_ = true;
                 auto dl_result = send_query_sync(std::move(dl_req));
                 if (!dl_result || dl_result->get_id() != td_api::file::ID) {
@@ -451,7 +451,7 @@ private:
                 in.seekg(static_cast<std::streamoff>(offset));
 
                 std::vector<char> buf(to_fetch);
-                in.read(buf.data(), to_fetch);
+                in.read(buf.data(), static_cast<std::streamsize>(to_fetch));
                 const auto n = in.gcount();
                 if (n <= 0) {
                     spdlog::warn("Read returned {} bytes at offset={}", n, offset);
