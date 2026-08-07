@@ -96,6 +96,7 @@ void client_manager::stop() {
     // funny way to wake up the event loop :)
     make_client().post([] {});
 
+    auto _ = std::scoped_lock(m_clients_mutex);
     std::ranges::for_each(m_clients, &receiver::cancel, grace::fn::op::get_value());
 }
 
