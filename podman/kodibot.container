@@ -10,7 +10,7 @@ Description=Kodibot Container
 ContainerName=kodibot
 Pull=newer
 
-Image=ghcr.io/sigasigasiga/kodibot:main
+Image=ghcr.io/sigasigasiga/kodibot:release-v0.1
 Exec=--kodi-address host.containers.internal \
      --telegram-db-path /tdlib-db \
      --http-server-bind-address 0.0.0.0 \
