@@ -90,7 +90,7 @@ Installation instructions are organized by platform below. Currently, only Linux
 1. **Download the kodibot Podman Quadlet:**
 
    ```bash
-   wget https://github.com/sigasigasiga/kodibot/raw/refs/heads/main/podman/kodibot.container
+   wget https://github.com/sigasigasiga/kodibot/raw/refs/heads/release/v0.1/podman/kodibot.container
    ```
 
    If you intend to run kodibot on a machine different from your Kodi instance, you may need to edit the `kodibot.container` file and change the IP address to the one that is reachable from your Kodi machine in the `PublishPort` field.
@@ -100,7 +100,7 @@ Installation instructions are organized by platform below. Currently, only Linux
    Copy the template:
 
    ```bash
-   wget https://github.com/sigasigasiga/kodibot/raw/refs/heads/main/podman/kodibot.conf.template -O kodibot.conf
+   wget https://github.com/sigasigasiga/kodibot/raw/refs/heads/release/v0.1/podman/kodibot.conf.template -O kodibot.conf
    ```
 
    Edit `kodibot.conf` and fill in your credentials. Required fields:
