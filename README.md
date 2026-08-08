@@ -54,7 +54,7 @@ To use the Telegram Bot API, you need to create an app on **my.telegram.org**:
 #### 3. Create a Telegram Bot with BotFather
 
 1. **Start BotFather:**
-   - Open Telegram and search for `@BotFather`
+   - Open Telegram and search for `@BotFather` or visit https://t.me/BotFather
    - Send `/start`
 2. **Create a New Bot:**
    - Send `/newbot`
