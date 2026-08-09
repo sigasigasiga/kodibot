@@ -9,6 +9,7 @@ https://github.com/user-attachments/assets/fef4d32d-eff1-46c2-94fb-4693ed29d34d
 - [Setup](#setup)
   - [Obtaining Credentials](#obtaining-credentials)
   - [Installation](#installation)
+- [Usage](#usage)
 - [Security Notes](#security-notes)
 - [How It Works Internally](#how-it-works-internally)
 - [How to Support the Project](#how-to-support-the-project)
@@ -160,6 +161,10 @@ Installation instructions are organized by platform below. Currently, only Linux
   ##### Steps
   ##### Troubleshooting
 -->
+
+## Usage
+
+Using kodibot is simple: just forward or send a video file to the bot in Telegram, and it will start playing on your Kodi instance.
 
 ## Security Notes
 
