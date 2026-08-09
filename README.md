@@ -143,7 +143,9 @@ Installation instructions are organized by platform below. Currently, only Linux
 
 - **Error: `creating container storage: not enough unused IDs in user namespace`**
 
-  You don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
+  If you have any running containers with `--userns=keep-id`, see [this article](https://github.com/podman-container-tools/podman/blob/aec2f54ec68905b13f872c6343061c9eae9dddb7/troubleshooting.md#43-podman-run---usernsauto-fails-with-error-creating-container-storage-not-enough-unused-ids-in-user-namespace).
+
+  Otherwise, you don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
 
   Each line in `/etc/subuid` and `/etc/subgid` has the format `<user name OR uid>:<start>:<count>`, and the third value, the count, may be too small for your use case. You need to increase it. The quadlet shipped with the bot only needs 2048 subuids/subgids, so make sure the count is at least that large.
 
