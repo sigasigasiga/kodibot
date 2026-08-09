@@ -145,7 +145,9 @@ Installation instructions are organized by platform below. Currently, only Linux
 
   You don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
 
-  You can allocate more by editing `/etc/subuid` and `/etc/subgid` and adding a line to both of these files like:
+  Each line in `/etc/subuid` and `/etc/subgid` has the format `<user name OR uid>:<start>:<count>`, and the third value, the count, may be too small for your use case. You need to increase it. The quadlet shipped with the bot only needs around 1000 subuids/subgids, so make sure the count is at least that large.
+
+  You can allocate more by editing `/etc/subuid` and `/etc/subgid` and adding (or adjusting) a line in both of these files, for example:
 
   ```
   <YOUR_USERNAME_HERE>:524288:262144
