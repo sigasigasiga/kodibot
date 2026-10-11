@@ -178,6 +178,7 @@ public:
     )
         : m_signal_monitor{SIGINT, SIGTERM}
         , m_client(m_client_manager.make_client())
+        , m_update_connection(m_client.subscribe(std::bind_front(&kodibot_app::on_update, this)))
         , m_state(
               std::in_place_index<0>,
               m_client,
@@ -346,6 +347,19 @@ private:
                 );
             }
         );
+    }
+
+    void on_update(const td_api::Object &update) {
+        const auto auth = kodibot::telegram::downcast<const td_api::updateAuthorizationState *>(&update);
+        if (!auth || auth->authorization_state_->get_id() != td_api::authorizationStateClosed::ID) {
+            return;
+        }
+
+        // NB: TDLib closes the instance by itself when the session gets terminated
+        // (e.g. the bot token has been revoked). A closed instance never works again,
+        // so there is no point in running without it
+        spdlog::error("TDLib instance has been closed (was the bot token revoked?)");
+        fail();
     }
 
     // kodibot::bot::bot::hoster
@@ -557,6 +571,7 @@ private:
 
     kodibot::telegram::client_manager m_client_manager;
     kodibot::telegram::client &m_client;
+    kodibot::util::scoped_connection m_update_connection;
     state_type m_state;
     std::thread m_telegram_thread;
 

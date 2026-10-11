@@ -105,9 +105,13 @@ bot::bot(
     m_client.send_request(
         td::td_api::make_object<td::td_api::getAuthorizationState>(),
         [](td::td_api::object_ptr<td::td_api::Object> o) {
-            // NB: the request fails with an error if the client gets stopped in the meantime
+            // NB: the request fails with an error if the client gets stopped in the meantime,
+            // and TDLib may already be closing the instance (e.g. the bot token has been revoked)
             assert(
                 o->get_id() == td::td_api::authorizationStateReady::ID ||
+                o->get_id() == td::td_api::authorizationStateLoggingOut::ID ||
+                o->get_id() == td::td_api::authorizationStateClosing::ID ||
+                o->get_id() == td::td_api::authorizationStateClosed::ID ||
                 o->get_id() == td::td_api::error::ID
             );
         }
