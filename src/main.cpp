@@ -447,7 +447,11 @@ private:
                 return;
             }
 
-            if (info->supports_streaming && info->size > 0) {
+            // NB: `supports_streaming` only tells whether the video can be played from the beginning
+            // while it's still being downloaded. Byte ranges can be served for any video because TDLib
+            // can download any part of a file, so only a video of unknown size must be downloaded
+            // completely before it can be served
+            if (info->size > 0) {
                 serve_seekable(res, *info);
             } else {
                 serve_non_seekable(res, *info);
