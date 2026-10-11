@@ -283,6 +283,9 @@ private:
         std::int64_t size{0};
         std::string mime_type;
         bool supports_streaming{false};
+
+        // serializes the downloads of the file, see `serve_seekable`
+        std::shared_ptr<std::mutex> download_mutex;
     };
 
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
@@ -374,11 +377,14 @@ private:
             .size = size,
             .mime_type = std::move(mime_type),
             .supports_streaming = supports_streaming,
+            .download_mutex = std::make_shared<std::mutex>(),
         };
 
         {
             std::lock_guard lock(m_videos_mutex);
-            m_videos[file_id] = info;
+            // NB: keep the existing registration of the same file, if any,
+            // so that all the requests for the file share its `download_mutex`
+            m_videos.try_emplace(file_id, info);
         }
 
         spdlog::info(
@@ -461,6 +467,17 @@ private:
 
                 spdlog::trace("Fetching chunk: offset={}, length={}, to_fetch={}", offset, length, to_fetch);
 
+                // NB: TDLib allows only one pending synchronous `downloadFile` request per file:
+                // a request with another offset fails the pending one with "Canceled by another
+                // downloadFile request", which would abort the other HTTP response when the file is
+                // read over several connections at once. The lock is held until the chunk is read,
+                // so that another download can't complete the file and move it before it's opened
+                std::unique_lock download_lock(*info.download_mutex);
+                if (!sink.is_writable()) {
+                    spdlog::trace("Client of file_id={} is gone, not fetching offset={}", info.file_id, offset);
+                    return false;
+                }
+
                 auto dl_req = td_api::make_object<td_api::downloadFile>();
                 dl_req->file_id_ = info.file_id;
                 dl_req->priority_ = 1;
@@ -499,6 +516,8 @@ private:
                 std::vector<char> buf(to_fetch);
                 in.read(buf.data(), static_cast<std::streamsize>(to_fetch));
                 const auto n = in.gcount();
+                download_lock.unlock();
+
                 if (n <= 0) {
                     spdlog::warn("Read returned {} bytes at offset={}", n, offset);
                     return false;
