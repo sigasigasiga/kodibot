@@ -340,7 +340,13 @@ private:
             file_id, size, info.mime_type, info.supports_streaming
         );
 
-        return std::format("http://{}:{}/videos/{}", m_http_server_public_address, m_http_server_public_port, file_id);
+        // NB: an IPv6 address must be enclosed in brackets to be used in a URL
+        const auto &address = m_http_server_public_address;
+        const auto host = address.contains(':') && !address.starts_with('[')
+            ? std::format("[{}]", address)
+            : address;
+
+        return std::format("http://{}:{}/videos/{}", host, m_http_server_public_port, file_id);
     }
 
     // kodibot::bot::bot::player
