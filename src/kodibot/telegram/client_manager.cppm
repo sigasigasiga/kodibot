@@ -2,6 +2,7 @@ module;
 
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <stop_token>
@@ -93,10 +94,21 @@ void client_manager::stop() {
     spdlog::info("Stopping TDLib client manager...");
     m_stop.request_stop();
 
-    // funny way to wake up the event loop :)
-    make_client().post([] {});
-
     auto _ = std::scoped_lock(m_clients_mutex);
+
+    // funny way to wake up the event loop :)
+    // NB: the request goes to an existing client: creating a new one just for that would start
+    // a TDLib instance right before `td::ClientManager` gets destroyed, and TDLib sometimes aborts
+    // in its destructor when that happens while another instance is still being initialized.
+    // Nobody waits for this request id, so the response is ignored
+    if (!m_clients.empty()) {
+        send_request(
+            m_clients.begin()->first,
+            std::numeric_limits<td::ClientManager::RequestId>::max(),
+            td::td_api::make_object<td::td_api::testCallEmpty>()
+        );
+    }
+
     std::ranges::for_each(m_clients, &receiver::cancel, grace::fn::op::get_value());
 }
 
