@@ -105,7 +105,11 @@ bot::bot(
     m_client.send_request(
         td::td_api::make_object<td::td_api::getAuthorizationState>(),
         [](td::td_api::object_ptr<td::td_api::Object> o) {
-            assert(o->get_id() == td::td_api::authorizationStateReady::ID);
+            // NB: the request fails with an error if the client gets stopped in the meantime
+            assert(
+                o->get_id() == td::td_api::authorizationStateReady::ID ||
+                o->get_id() == td::td_api::error::ID
+            );
         }
     );
 #endif // NDEBUG
