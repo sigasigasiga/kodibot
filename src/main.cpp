@@ -252,9 +252,11 @@ public:
         m_signal_monitor.stop();
         m_client_manager.stop();
 
-        // TODO: if `app.stop()` is called before `m_server.listen()`,
-        // which is theoretically possible, then the app would hang
-        // because `m_server.stop()` doesn't prevent the start of the listening
+        // NB: `m_server.stop()` does nothing unless the server is already running, so a `listen()`
+        // that hasn't started yet would never return. Wait until `listen()` has either started
+        // the server or failed: the HTTP thread is started before anything can call `stop()`,
+        // and it calls `listen()` right away
+        m_server.wait_until_ready();
         m_server.stop();
 
         spdlog::info("The bot has been stopped");
