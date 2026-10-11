@@ -693,6 +693,9 @@ int main(int argc, char **argv) {
         load_systemd_credentials(options, vm);
         po::notify(vm);
     } catch (const po::error &e) {
+        // NB: the log messages are postponed until the log level is known,
+        // so flush them now, otherwise they would be lost
+        std::move(log_postpone).set_log_level(log_level);
         spdlog::error("Cannot parse arguments: {}", e.what());
         print_help(options);
         return 1;
