@@ -4,7 +4,9 @@ module;
 #include <cassert>
 #include <map>
 #include <mutex>
+#include <ranges>
 #include <stop_token>
+#include <vector>
 
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
@@ -96,8 +98,19 @@ void client_manager::stop() {
     // funny way to wake up the event loop :)
     make_client().post([] {});
 
-    auto _ = std::scoped_lock(m_clients_mutex);
-    std::ranges::for_each(m_clients, &receiver::cancel, grace::fn::op::get_value());
+    // NB: `cancel()` invokes the callbacks of the pending requests, and those may call back
+    // into the client manager, so it must not be called under `m_clients_mutex`.
+    // The pointers stay valid after the unlock because a client cannot be deleted
+    std::vector<receiver *> clients;
+    {
+        auto _ = std::scoped_lock(m_clients_mutex);
+        clients = m_clients
+            | std::views::values
+            | std::views::transform([](const auto &c) { return c.get(); })
+            | std::ranges::to<std::vector>();
+    }
+
+    std::ranges::for_each(clients, &receiver::cancel);
 }
 
 // client::delegate
