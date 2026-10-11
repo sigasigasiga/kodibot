@@ -202,12 +202,13 @@ public:
         );
     }
 
-    void run() {
+    int run() {
         // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_bind_address, m_http_server_bind_port);
             if (!m_server.listen(m_http_server_bind_address, m_http_server_bind_port)) {
                 spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_bind_address, m_http_server_bind_port);
+                fail();
             }
 
             spdlog::info("HTTP server thread is shutting down...");
@@ -237,12 +238,14 @@ public:
         m_telegram_thread.join();
 
         spdlog::info("Shutdown");
+
+        return m_failed ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     void stop() {
-        // NB: `stop()` may be re-entered on the same thread: stopping the client manager cancels
-        // the pending TDLib requests, and their callbacks (e.g. `on_auth_complete`) call `stop()`
-        // again. `std::call_once` would deadlock in that case
+        // NB: only the first call does the work, the later ones return immediately. `stop()` is called
+        // from several threads, and it's also safe to call it from the callbacks of the requests that
+        // get canceled below, while `std::call_once` would deadlock there
         if (m_stopping.exchange(true)) {
             return;
         }
@@ -263,6 +266,17 @@ public:
     }
 
 private:
+    // Stops the bot because of an unrecoverable error, which makes `run()` report a failure.
+    // NB: errors that happen after the shutdown has begun (e.g. the requests canceled by `stop()`)
+    // are not failures
+    void fail() {
+        if (!m_stopping) {
+            m_failed = true;
+        }
+
+        stop();
+    }
+
     struct video_info {
         td_api::int32 file_id{0};
         std::int64_t size{0};
@@ -293,9 +307,15 @@ private:
     ) {
         assert(&m_client == &client);
 
+        if (m_stopping) {
+            // NB: the authentication got interrupted by the shutdown (e.g. the pending requests
+            // have been canceled), which is neither a success nor a failure
+            return;
+        }
+
         if (error) {
             spdlog::error("Authentication failed: {}", to_string(*error));
-            stop();
+            fail();
             return;
         }
 
@@ -304,10 +324,14 @@ private:
             td_api::make_object<td_api::getOption>("unix_time"),
             [this, whitelist = std::move(whitelist)]
             (td_api::object_ptr<td_api::Object> o) mutable {
+                if (m_stopping) {
+                    return;
+                }
+
                 const auto value = kodibot::telegram::downcast<td_api::optionValueInteger *>(o.get());
                 if (!value) {
                     spdlog::error("Unexpected response type for unix_time option (id={})", o->get_id());
-                    stop();
+                    fail();
                     return;
                 }
 
@@ -550,6 +574,7 @@ private:
     kodibot::kodi::client m_kodi;
 
     std::atomic<bool> m_stopping{false};
+    std::atomic<bool> m_failed{false};
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
@@ -747,7 +772,5 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    bot.run();
-
-    return 0;
+    return bot.run();
 }
