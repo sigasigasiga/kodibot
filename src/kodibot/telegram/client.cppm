@@ -3,6 +3,7 @@ module;
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <ranges>
 
 #include <td/telegram/Client.h>
@@ -17,6 +18,14 @@ export import :receiver;
 import grace;
 
 import kodibot.util;
+
+namespace kodibot::telegram {
+
+td::td_api::object_ptr<td::td_api::Object> make_stopped_error() {
+    return td::td_api::make_object<td::td_api::error>(406, "Client stopped");
+}
+
+} // namespace kodibot::telegram
 
 export namespace kodibot::telegram {
 
@@ -79,6 +88,7 @@ private:
     td::ClientManager::ClientId m_id;
 
     std::mutex m_mutex;
+    bool m_canceled;
     td::ClientManager::RequestId m_request_id;
     std::map<td::ClientManager::RequestId, callback_type> m_callbacks;
 
@@ -88,21 +98,30 @@ private:
 client::client(delegate &delegate, td::ClientManager::ClientId id)
     : m_delegate(delegate)
     , m_id(id)
+    , m_canceled(false)
     , m_request_id(0)
 {
 }
 
 void client::send_request(td::td_api::object_ptr<td::td_api::Function> f, callback_type cb) {
-    td::ClientManager::RequestId req_id;
+    std::optional<td::ClientManager::RequestId> req_id;
     {
         auto _ = std::scoped_lock(m_mutex);
-        req_id = ++m_request_id;
-        if (cb) {
-            m_callbacks.emplace(req_id, std::move(cb));
+        if (!m_canceled) {
+            req_id = ++m_request_id;
+            if (cb) {
+                m_callbacks.emplace(*req_id, std::move(cb));
+            }
         }
     }
 
-    m_delegate.send_request(m_id, req_id, std::move(f));
+    if (req_id) {
+        m_delegate.send_request(m_id, *req_id, std::move(f));
+    } else if (cb) {
+        // NB: the client is stopped, so nobody would ever invoke the callback, and a caller
+        // waiting for the response (e.g. `send_query_sync`) would hang forever
+        std::invoke(std::move(cb), make_stopped_error());
+    }
 }
 
 util::scoped_connection client::subscribe(signal_type::slot_function_type callback) {
@@ -141,11 +160,12 @@ void client::cancel() {
 
     {
         auto _ = std::scoped_lock(m_mutex);
+        m_canceled = true;
         callbacks = std::move(m_callbacks);
     }
 
     for (auto &cb : callbacks | std::views::values) {
-        std::invoke(std::move(cb), td::td_api::make_object<td::td_api::error>(406, "Client stopped"));
+        std::invoke(std::move(cb), make_stopped_error());
     }
 
     spdlog::debug("Telegram client {} stopped, {} pending requests canceled", m_id, callbacks.size());

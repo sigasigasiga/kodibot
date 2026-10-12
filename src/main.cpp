@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -177,6 +178,7 @@ public:
     )
         : m_signal_monitor{SIGINT, SIGTERM}
         , m_client(m_client_manager.make_client())
+        , m_update_connection(m_client.subscribe(std::bind_front(&kodibot_app::on_update, this)))
         , m_state(
               std::in_place_index<0>,
               m_client,
@@ -201,12 +203,13 @@ public:
         );
     }
 
-    void run() {
+    int run() {
         // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_bind_address, m_http_server_bind_port);
             if (!m_server.listen(m_http_server_bind_address, m_http_server_bind_port)) {
                 spdlog::error("HTTP server failed to bind to {}:{}", m_http_server_bind_address, m_http_server_bind_port);
+                fail();
             }
 
             spdlog::info("HTTP server thread is shutting down...");
@@ -236,30 +239,53 @@ public:
         m_telegram_thread.join();
 
         spdlog::info("Shutdown");
+
+        return m_failed ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     void stop() {
-        std::call_once(m_stop_flag, [this] {
-            spdlog::info("Stopping the bot");
+        // NB: only the first call does the work, the later ones return immediately. `stop()` is called
+        // from several threads, and it's also safe to call it from the callbacks of the requests that
+        // get canceled below, while `std::call_once` would deadlock there
+        if (m_stopping.exchange(true)) {
+            return;
+        }
 
-            m_signal_monitor.stop();
-            m_client_manager.stop();
+        spdlog::info("Stopping the bot");
 
-            // TODO: if `app.stop()` is called before `m_server.listen()`,
-            // which is theoretically possible, then the app would hang
-            // because `m_server.stop()` doesn't prevent the start of the listening
-            m_server.stop();
+        m_signal_monitor.stop();
+        m_client_manager.stop();
 
-            spdlog::info("The bot has been stopped");
-        });
+        // NB: `m_server.stop()` does nothing unless the server is already running, so a `listen()`
+        // that hasn't started yet would never return. Wait until `listen()` has either started
+        // the server or failed: the HTTP thread is started before anything can call `stop()`,
+        // and it calls `listen()` right away
+        m_server.wait_until_ready();
+        m_server.stop();
+
+        spdlog::info("The bot has been stopped");
     }
 
 private:
+    // Stops the bot because of an unrecoverable error, which makes `run()` report a failure.
+    // NB: errors that happen after the shutdown has begun (e.g. the requests canceled by `stop()`)
+    // are not failures
+    void fail() {
+        if (!m_stopping) {
+            m_failed = true;
+        }
+
+        stop();
+    }
+
     struct video_info {
         td_api::int32 file_id{0};
         std::int64_t size{0};
         std::string mime_type;
         bool supports_streaming{false};
+
+        // serializes the downloads of the file, see `serve_seekable`
+        std::shared_ptr<std::mutex> download_mutex;
     };
 
     td_api::object_ptr<td_api::Object> send_query_sync(td_api::object_ptr<td_api::Function> f) {
@@ -285,9 +311,15 @@ private:
     ) {
         assert(&m_client == &client);
 
+        if (m_stopping) {
+            // NB: the authentication got interrupted by the shutdown (e.g. the pending requests
+            // have been canceled), which is neither a success nor a failure
+            return;
+        }
+
         if (error) {
             spdlog::error("Authentication failed: {}", to_string(*error));
-            stop();
+            fail();
             return;
         }
 
@@ -296,10 +328,14 @@ private:
             td_api::make_object<td_api::getOption>("unix_time"),
             [this, whitelist = std::move(whitelist)]
             (td_api::object_ptr<td_api::Object> o) mutable {
+                if (m_stopping) {
+                    return;
+                }
+
                 const auto value = kodibot::telegram::downcast<td_api::optionValueInteger *>(o.get());
                 if (!value) {
                     spdlog::error("Unexpected response type for unix_time option (id={})", o->get_id());
-                    stop();
+                    fail();
                     return;
                 }
 
@@ -316,6 +352,19 @@ private:
         );
     }
 
+    void on_update(const td_api::Object &update) {
+        const auto auth = kodibot::telegram::downcast<const td_api::updateAuthorizationState *>(&update);
+        if (!auth || auth->authorization_state_->get_id() != td_api::authorizationStateClosed::ID) {
+            return;
+        }
+
+        // NB: TDLib closes the instance by itself when the session gets terminated
+        // (e.g. the bot token has been revoked). A closed instance never works again,
+        // so there is no point in running without it
+        spdlog::error("TDLib instance has been closed (was the bot token revoked?)");
+        fail();
+    }
+
     // kodibot::bot::bot::hoster
     std::string host_video(
         td::td_api::int32 file_id,
@@ -328,11 +377,14 @@ private:
             .size = size,
             .mime_type = std::move(mime_type),
             .supports_streaming = supports_streaming,
+            .download_mutex = std::make_shared<std::mutex>(),
         };
 
         {
             std::lock_guard lock(m_videos_mutex);
-            m_videos[file_id] = info;
+            // NB: keep the existing registration of the same file, if any,
+            // so that all the requests for the file share its `download_mutex`
+            m_videos.try_emplace(file_id, info);
         }
 
         spdlog::info(
@@ -395,7 +447,11 @@ private:
                 return;
             }
 
-            if (info->supports_streaming && info->size > 0) {
+            // NB: `supports_streaming` only tells whether the video can be played from the beginning
+            // while it's still being downloaded. Byte ranges can be served for any video because TDLib
+            // can download any part of a file, so only a video of unknown size must be downloaded
+            // completely before it can be served
+            if (info->size > 0) {
                 serve_seekable(res, *info);
             } else {
                 serve_non_seekable(res, *info);
@@ -414,6 +470,17 @@ private:
                 const auto to_fetch = std::min(length, kChunkSize);
 
                 spdlog::trace("Fetching chunk: offset={}, length={}, to_fetch={}", offset, length, to_fetch);
+
+                // NB: TDLib allows only one pending synchronous `downloadFile` request per file:
+                // a request with another offset fails the pending one with "Canceled by another
+                // downloadFile request", which would abort the other HTTP response when the file is
+                // read over several connections at once. The lock is held until the chunk is read,
+                // so that another download can't complete the file and move it before it's opened
+                std::unique_lock download_lock(*info.download_mutex);
+                if (!sink.is_writable()) {
+                    spdlog::trace("Client of file_id={} is gone, not fetching offset={}", info.file_id, offset);
+                    return false;
+                }
 
                 auto dl_req = td_api::make_object<td_api::downloadFile>();
                 dl_req->file_id_ = info.file_id;
@@ -453,6 +520,8 @@ private:
                 std::vector<char> buf(to_fetch);
                 in.read(buf.data(), static_cast<std::streamsize>(to_fetch));
                 const auto n = in.gcount();
+                download_lock.unlock();
+
                 if (n <= 0) {
                     spdlog::warn("Read returned {} bytes at offset={}", n, offset);
                     return false;
@@ -525,6 +594,7 @@ private:
 
     kodibot::telegram::client_manager m_client_manager;
     kodibot::telegram::client &m_client;
+    kodibot::util::scoped_connection m_update_connection;
     state_type m_state;
     std::thread m_telegram_thread;
 
@@ -541,7 +611,8 @@ private:
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
 
-    std::once_flag m_stop_flag;
+    std::atomic<bool> m_stopping{false};
+    std::atomic<bool> m_failed{false};
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
@@ -742,7 +813,5 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    bot.run();
-
-    return 0;
+    return bot.run();
 }

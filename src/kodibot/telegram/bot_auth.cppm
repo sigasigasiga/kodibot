@@ -1,5 +1,7 @@
 module;
 
+#include <atomic>
+#include <cstdint>
 #include <expected>
 #include <functional>
 
@@ -33,7 +35,11 @@ private:
 
     auto make_auth_handler() {
         return [this, id = ++m_authentication_query_id](td::td_api::object_ptr<td::td_api::Object> object) {
-            if (id == m_authentication_query_id && object->get_id() == td::td_api::error::ID) {
+            if (
+                id == m_authentication_query_id &&
+                object->get_id() == td::td_api::error::ID &&
+                !m_completed.exchange(true)
+            ) {
                 std::invoke(std::move(m_callback), m_client, td::move_tl_object_as<td::td_api::error>(object));
             }
         };
@@ -44,8 +50,12 @@ private:
     td::td_api::object_ptr<td::td_api::setTdlibParameters> m_auth;
     std::string m_bot_token;
     util::scoped_connection m_connection;
-    std::uint64_t m_authentication_query_id; // don't know why it's needed but it exists in the official cpp example
+    std::atomic<std::uint64_t> m_authentication_query_id; // don't know why it's needed but it exists in the official cpp example
 
+    // NB: `client::cancel()` invokes the pending auth handlers on the thread that stops the client,
+    // while the TDLib thread may still be handling the authorization updates,
+    // so `m_callback` must be invoked at most once, by whichever thread completes first
+    std::atomic<bool> m_completed;
     callback_type m_callback;
 };
 
@@ -59,6 +69,7 @@ bot_auth::bot_auth(
     , m_bot_token(std::move(bot_token))
     , m_connection(client.subscribe(std::bind_front(&bot_auth::on_update, this)))
     , m_authentication_query_id(0)
+    , m_completed(false)
 {
 }
 
@@ -80,7 +91,9 @@ void bot_auth::on_update(const td::td_api::Object &update) {
         grace::fn::bind::overload{
             [this](const td::td_api::authorizationStateReady &) {
                 spdlog::trace("Authorization state: READY");
-                m_client.post(std::bind_front(std::move(m_callback), std::ref(m_client), nullptr));
+                if (!m_completed.exchange(true)) {
+                    m_client.post(std::bind_front(std::move(m_callback), std::ref(m_client), nullptr));
+                }
             },
             [](const td::td_api::authorizationStateLoggingOut &) {
                 spdlog::trace("Authorization state: LOGGING_OUT");

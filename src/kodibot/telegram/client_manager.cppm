@@ -2,9 +2,12 @@ module;
 
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <map>
 #include <mutex>
+#include <ranges>
 #include <stop_token>
+#include <vector>
 
 #include <td/telegram/Client.h>
 #include <td/telegram/td_api.hpp>
@@ -93,11 +96,32 @@ void client_manager::stop() {
     spdlog::info("Stopping TDLib client manager...");
     m_stop.request_stop();
 
-    // funny way to wake up the event loop :)
-    make_client().post([] {});
+    // NB: `cancel()` invokes the callbacks of the pending requests, and those may call back
+    // into the client manager, so it must not be called under `m_clients_mutex`.
+    // The pointers stay valid after the unlock because a client cannot be deleted
+    std::vector<receiver *> clients;
+    {
+        auto _ = std::scoped_lock(m_clients_mutex);
+        clients = m_clients
+            | std::views::values
+            | std::views::transform([](const auto &c) { return c.get(); })
+            | std::ranges::to<std::vector>();
 
-    auto _ = std::scoped_lock(m_clients_mutex);
-    std::ranges::for_each(m_clients, &receiver::cancel, grace::fn::op::get_value());
+        // funny way to wake up the event loop :)
+        // NB: the request goes to an existing client: creating a new one just for that would start
+        // a TDLib instance right before `td::ClientManager` gets destroyed, and TDLib sometimes aborts
+        // in its destructor when that happens while another instance is still being initialized.
+        // Nobody waits for this request id, so the response is ignored
+        if (!m_clients.empty()) {
+            send_request(
+                m_clients.begin()->first,
+                std::numeric_limits<td::ClientManager::RequestId>::max(),
+                td::td_api::make_object<td::td_api::testCallEmpty>()
+            );
+        }
+    }
+
+    std::ranges::for_each(clients, &receiver::cancel);
 }
 
 // client::delegate
