@@ -340,7 +340,13 @@ private:
             file_id, size, info.mime_type, info.supports_streaming
         );
 
-        return std::format("http://{}:{}/videos/{}", m_http_server_public_address, m_http_server_public_port, file_id);
+        // NB: an IPv6 address must be enclosed in brackets to be used in a URL
+        const auto &address = m_http_server_public_address;
+        const auto host = address.contains(':') && !address.starts_with('[')
+            ? std::format("[{}]", address)
+            : address;
+
+        return std::format("http://{}:{}/videos/{}", host, m_http_server_public_port, file_id);
     }
 
     // kodibot::bot::bot::player
@@ -650,14 +656,14 @@ int main(int argc, char **argv) {
          "Comma-separated list of allowed Telegram user IDs, "
          "e.g. \"123456789,987654321\".")
 
-        ("http-server-public-address", po::value<std::string>(&http_server_public_address),
+        ("http-server-public-address", po::value<std::string>(&http_server_public_address)->default_value("127.0.0.1"),
          "Address Kodi uses to reach this bot's HTTP server. Used to build the "
          "video URLs handed to Kodi, so it must be routable from Kodi's host.")
         ("http-server-public-port", po::value<std::uint16_t>(&http_server_public_port)->default_value(9988),
          "Port Kodi uses to reach this bot's HTTP server. Used to build the "
          "video URLs handed to Kodi, so it must be routable from Kodi's host.")
 
-        ("http-server-bind-address", po::value<std::string>(&http_server_bind_address),
+        ("http-server-bind-address", po::value<std::string>(&http_server_bind_address)->default_value("127.0.0.1"),
          "Address the bot's HTTP server binds to")
         ("http-server-bind-port", po::value<std::uint16_t>(&http_server_bind_port)->default_value(9988),
          "Port the bot's HTTP server listens on.")
