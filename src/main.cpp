@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -239,19 +240,24 @@ public:
     }
 
     void stop() {
-        std::call_once(m_stop_flag, [this] {
-            spdlog::info("Stopping the bot");
+        // NB: `stop()` may be re-entered on the same thread: stopping the client manager cancels
+        // the pending TDLib requests, and their callbacks (e.g. `on_auth_complete`) call `stop()`
+        // again. `std::call_once` would deadlock in that case
+        if (m_stopping.exchange(true)) {
+            return;
+        }
 
-            m_signal_monitor.stop();
-            m_client_manager.stop();
+        spdlog::info("Stopping the bot");
 
-            // TODO: if `app.stop()` is called before `m_server.listen()`,
-            // which is theoretically possible, then the app would hang
-            // because `m_server.stop()` doesn't prevent the start of the listening
-            m_server.stop();
+        m_signal_monitor.stop();
+        m_client_manager.stop();
 
-            spdlog::info("The bot has been stopped");
-        });
+        // TODO: if `app.stop()` is called before `m_server.listen()`,
+        // which is theoretically possible, then the app would hang
+        // because `m_server.stop()` doesn't prevent the start of the listening
+        m_server.stop();
+
+        spdlog::info("The bot has been stopped");
     }
 
 private:
@@ -541,7 +547,7 @@ private:
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
 
-    std::once_flag m_stop_flag;
+    std::atomic<bool> m_stopping{false};
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
