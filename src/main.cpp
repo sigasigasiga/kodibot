@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -202,7 +203,7 @@ public:
         );
     }
 
-    void run() {
+    [[nodiscard]] int run() {
         // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_bind_address, m_http_server_bind_port);
@@ -211,7 +212,10 @@ public:
             }
 
             spdlog::info("HTTP server thread is shutting down...");
-            stop();
+
+            // NB: `listen()` succeeds only after `stop()` has stopped the server,
+            // in which case this call is a no-op. Otherwise the server has failed
+            stop(EXIT_FAILURE);
         });
 
         m_telegram_thread = std::thread([this] {
@@ -220,12 +224,14 @@ public:
 
             spdlog::info("TDLib client manager thread is shutting down...");
 
-            stop();
+            // NB: the event loop exits only after `stop()` has stopped it,
+            // in which case this call is a no-op. If it ever exits on its own, that's a failure
+            stop(EXIT_FAILURE);
         });
 
         if (auto sig = m_signal_monitor.wait()) {
             spdlog::info("Received signal {}, shutting down", *sig);
-            stop();
+            stop(EXIT_SUCCESS);
         } else {
             spdlog::info("Signal monitor got stopped, shutting down");
 
@@ -236,18 +242,32 @@ public:
         m_http_thread.join();
         m_telegram_thread.join();
 
-        spdlog::info("Shutdown");
+        const int exit_code = m_exit_code.load();
+        assert(exit_code != k_no_exit_code && "the bot has shut down without `stop()` being called");
+
+        spdlog::info("Shutdown with exit code {}", exit_code);
+        return exit_code;
     }
 
-    void stop() {
-        // NB: `stop()` may be re-entered on the same thread: stopping the client manager cancels
+    void stop(int exit_code) {
+        // NB: the OS truncates the exit code to 8 bits, so e.g. 256 would turn into a success.
+        // Also, `k_no_exit_code` would break the check below
+        assert(exit_code >= 0 && exit_code <= 255 && "invalid exit code");
+
+        // NB 1: only the first call stops the bot and decides the exit code. The subsequent calls
+        // are usually caused by the shutdown itself (e.g. cancelled TDLib requests reporting errors),
+        // so they must not override the original reason
+        //
+        // NB 2: `stop()` may be re-entered on the same thread: stopping the client manager cancels
         // the pending TDLib requests, and their callbacks (e.g. `on_auth_complete`) call `stop()`
         // again. `std::call_once` would deadlock in that case
-        if (m_stopping.exchange(true)) {
+        int expected = k_no_exit_code;
+        if (!m_exit_code.compare_exchange_strong(expected, exit_code)) {
+            spdlog::debug("Ignoring stop with exit code {}: already stopping with exit code {}", exit_code, expected);
             return;
         }
 
-        spdlog::info("Stopping the bot");
+        spdlog::info("Stopping the bot with exit code {}", exit_code);
 
         m_signal_monitor.stop();
         m_client_manager.stop();
@@ -293,7 +313,7 @@ private:
 
         if (error) {
             spdlog::error("Authentication failed: {}", to_string(*error));
-            stop();
+            stop(EXIT_FAILURE);
             return;
         }
 
@@ -305,7 +325,7 @@ private:
                 const auto value = kodibot::telegram::downcast<td_api::optionValueInteger *>(o.get());
                 if (!value) {
                     spdlog::error("Unexpected response type for unix_time option (id={})", o->get_id());
-                    stop();
+                    stop(EXIT_FAILURE);
                     return;
                 }
 
@@ -547,7 +567,9 @@ private:
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
 
-    std::atomic<bool> m_stopping{false};
+    // `m_exit_code` holds this value until `stop()` is called
+    static constexpr int k_no_exit_code = -1;
+    std::atomic<int> m_exit_code{k_no_exit_code};
 };
 
 constexpr const char *k_credentials_filename = "kodibot.conf";
@@ -748,7 +770,5 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    bot.run();
-
-    return 0;
+    return bot.run();
 }
