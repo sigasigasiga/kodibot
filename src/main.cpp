@@ -30,6 +30,7 @@
 #include <thread>
 #include <utility>
 
+#include <sysexits.h>
 #include <unistd.h>
 
 import grace;
@@ -72,26 +73,29 @@ void validate(
 
 namespace {
 
-// NB: the values are visible to the outside world (scripts, `systemctl status`, etc.),
-// so keep them stable: add new codes instead of renumbering the existing ones
+// NB 1: the values come from `<sysexits.h>`, so `systemctl status` shows them by name,
+// e.g. `status=77/NOPERM`. See "Process Exit Codes" in systemd.exec(5)
+//
+// NB 2: the values are visible to the outside world (scripts, `systemctl status`, etc.),
+// so keep them stable
 enum class exit_code : std::uint8_t {
     // stopped by a signal, or `--help`/`--version` was requested
-    success = 0,
+    success = EX_OK,
 
     // the command-line options or the credentials file couldn't be parsed
-    invalid_arguments = 1,
+    invalid_arguments = EX_USAGE,
 
     // the HTTP server failed to bind, or stopped accepting the connections
-    http_server_failed = 2,
+    http_server_failed = EX_OSERR,
 
     // the TDLib event loop has exited without `stop()` being called
-    telegram_event_loop_exited = 3,
+    telegram_event_loop_exited = EX_SOFTWARE,
 
     // the bot couldn't log into Telegram, e.g. because of an invalid bot token
-    telegram_auth_failed = 4,
+    telegram_auth_failed = EX_NOPERM,
 
     // TDLib has responded with an object of an unexpected type
-    telegram_unexpected_response = 5,
+    telegram_unexpected_response = EX_PROTOCOL,
 };
 
 class spdlog_postpone
