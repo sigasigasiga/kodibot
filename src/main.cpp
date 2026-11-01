@@ -72,6 +72,28 @@ void validate(
 
 namespace {
 
+// NB: the values are visible to the outside world (scripts, `systemctl status`, etc.),
+// so keep them stable: add new codes instead of renumbering the existing ones
+enum class exit_code : std::uint8_t {
+    // stopped by a signal, or `--help`/`--version` was requested
+    success = 0,
+
+    // the command-line options or the credentials file couldn't be parsed
+    invalid_arguments = 1,
+
+    // the HTTP server failed to bind, or stopped accepting the connections
+    http_server_failed = 2,
+
+    // the TDLib event loop has exited without `stop()` being called
+    telegram_event_loop_exited = 3,
+
+    // the bot couldn't log into Telegram, e.g. because of an invalid bot token
+    telegram_auth_failed = 4,
+
+    // TDLib has responded with an object of an unexpected type
+    telegram_unexpected_response = 5,
+};
+
 class spdlog_postpone
 {
 public:
@@ -203,7 +225,7 @@ public:
         );
     }
 
-    [[nodiscard]] int run() {
+    [[nodiscard]] exit_code run() {
         // TODO: these will `std::terminate` on exception
         m_http_thread = std::thread([this] {
             spdlog::info("HTTP server starting, listening on {}:{}", m_http_server_bind_address, m_http_server_bind_port);
@@ -215,7 +237,7 @@ public:
 
             // NB: `listen()` succeeds only after `stop()` has stopped the server,
             // in which case this call is a no-op. Otherwise the server has failed
-            stop(EXIT_FAILURE);
+            stop(exit_code::http_server_failed);
         });
 
         m_telegram_thread = std::thread([this] {
@@ -226,12 +248,12 @@ public:
 
             // NB: the event loop exits only after `stop()` has stopped it,
             // in which case this call is a no-op. If it ever exits on its own, that's a failure
-            stop(EXIT_FAILURE);
+            stop(exit_code::telegram_event_loop_exited);
         });
 
         if (auto sig = m_signal_monitor.wait()) {
             spdlog::info("Received signal {}, shutting down", *sig);
-            stop(EXIT_SUCCESS);
+            stop(exit_code::success);
         } else {
             spdlog::info("Signal monitor got stopped, shutting down");
 
@@ -242,18 +264,14 @@ public:
         m_http_thread.join();
         m_telegram_thread.join();
 
-        const int exit_code = m_exit_code.load();
-        assert(exit_code != k_no_exit_code && "the bot has shut down without `stop()` being called");
+        const int code = m_exit_code.load();
+        assert(code != k_no_exit_code && "the bot has shut down without `stop()` being called");
 
-        spdlog::info("Shutdown with exit code {}", exit_code);
-        return exit_code;
+        spdlog::info("Shutdown with exit code {}", code);
+        return static_cast<exit_code>(code);
     }
 
-    void stop(int exit_code) {
-        // NB: the OS truncates the exit code to 8 bits, so e.g. 256 would turn into a success.
-        // Also, `k_no_exit_code` would break the check below
-        assert(exit_code >= 0 && exit_code <= 255 && "invalid exit code");
-
+    void stop(exit_code code) {
         // NB 1: only the first call stops the bot and decides the exit code. The subsequent calls
         // are usually caused by the shutdown itself (e.g. cancelled TDLib requests reporting errors),
         // so they must not override the original reason
@@ -261,13 +279,14 @@ public:
         // NB 2: `stop()` may be re-entered on the same thread: stopping the client manager cancels
         // the pending TDLib requests, and their callbacks (e.g. `on_auth_complete`) call `stop()`
         // again. `std::call_once` would deadlock in that case
+        const int desired = std::to_underlying(code);
         int expected = k_no_exit_code;
-        if (!m_exit_code.compare_exchange_strong(expected, exit_code)) {
-            spdlog::debug("Ignoring stop with exit code {}: already stopping with exit code {}", exit_code, expected);
+        if (!m_exit_code.compare_exchange_strong(expected, desired)) {
+            spdlog::debug("Ignoring stop with exit code {}: already stopping with exit code {}", desired, expected);
             return;
         }
 
-        spdlog::info("Stopping the bot with exit code {}", exit_code);
+        spdlog::info("Stopping the bot with exit code {}", desired);
 
         m_signal_monitor.stop();
         m_client_manager.stop();
@@ -313,7 +332,7 @@ private:
 
         if (error) {
             spdlog::error("Authentication failed: {}", to_string(*error));
-            stop(EXIT_FAILURE);
+            stop(exit_code::telegram_auth_failed);
             return;
         }
 
@@ -325,7 +344,7 @@ private:
                 const auto value = kodibot::telegram::downcast<td_api::optionValueInteger *>(o.get());
                 if (!value) {
                     spdlog::error("Unexpected response type for unix_time option (id={})", o->get_id());
-                    stop(EXIT_FAILURE);
+                    stop(exit_code::telegram_unexpected_response);
                     return;
                 }
 
@@ -567,7 +586,8 @@ private:
     bool m_kodi_enabled;
     kodibot::kodi::client m_kodi;
 
-    // `m_exit_code` holds this value until `stop()` is called
+    // `m_exit_code` holds this value until `stop()` is called.
+    // It never collides with an `exit_code` because the latter is unsigned
     static constexpr int k_no_exit_code = -1;
     std::atomic<int> m_exit_code{k_no_exit_code};
 };
@@ -711,11 +731,11 @@ int main(int argc, char **argv) {
         po::store(po::parse_command_line(argc, argv, options), vm);
         if (vm.count("help")) {
             print_help(options);
-            return 0;
+            return std::to_underlying(exit_code::success);
         }
         if (vm.count("version")) {
             std::cout << "kodibot " << kodibot::version::version_string << std::endl;
-            return 0;
+            return std::to_underlying(exit_code::success);
         }
 
         load_systemd_credentials(options, vm);
@@ -726,7 +746,7 @@ int main(int argc, char **argv) {
         std::move(log_postpone).set_log_level(log_level);
         spdlog::error("Cannot parse arguments: {}", e.what());
         print_help(options);
-        return 1;
+        return std::to_underlying(exit_code::invalid_arguments);
     }
 
     std::move(log_postpone).set_log_level(log_level);
@@ -770,5 +790,5 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    return bot.run();
+    return std::to_underlying(bot.run());
 }
