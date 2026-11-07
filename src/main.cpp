@@ -649,9 +649,7 @@ std::unordered_set<std::int64_t> parse_user_whitelist(const std::string &spec) {
     return whitelist;
 }
 
-}  // namespace
-
-int main(int argc, char **argv) {
+exit_code kodibot_main(int argc, const char **argv) {
     namespace po = boost::program_options;
 
     spdlog_postpone log_postpone(spdlog::default_logger(), 100);
@@ -735,11 +733,11 @@ int main(int argc, char **argv) {
         po::store(po::parse_command_line(argc, argv, options), vm);
         if (vm.count("help")) {
             print_help(options);
-            return std::to_underlying(exit_code::success);
+            return exit_code::success;
         }
         if (vm.count("version")) {
             std::cout << "kodibot " << kodibot::version::version_string << std::endl;
-            return std::to_underlying(exit_code::success);
+            return exit_code::success;
         }
 
         load_systemd_credentials(options, vm);
@@ -750,7 +748,7 @@ int main(int argc, char **argv) {
         std::move(log_postpone).set_log_level(log_level);
         spdlog::error("Cannot parse arguments: {}", e.what());
         print_help(options);
-        return std::to_underlying(exit_code::invalid_arguments);
+        return exit_code::invalid_arguments;
     }
 
     std::move(log_postpone).set_log_level(log_level);
@@ -794,5 +792,11 @@ int main(int argc, char **argv) {
         std::move(kodi_conn)
     );
 
-    return std::to_underlying(bot.run());
+    return bot.run();
+}
+
+}  // namespace
+
+int main(int argc, const char **argv) {
+    return std::to_underlying(kodibot_main(argc, argv));
 }
