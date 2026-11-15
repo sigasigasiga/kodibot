@@ -158,6 +158,24 @@ void set_db_cleanup_options(kodibot::telegram::client &client, td_api::int64 db_
     );
 }
 
+void prepare_host_address(std::string &address) {
+    struct ::in6_addr dst;
+    int res = ::inet_pton(AF_INET6, address.c_str(), &dst);
+    std::ignore = dst;
+
+    switch (res) {
+        break; case 1:
+            // NB: an IPv6 address must be enclosed in brackets to be used in a URL
+            address = std::format("[{}]", address);
+
+        break; case 0:
+            spdlog::trace("`{}` is not an IPv6 address", address);
+
+        break; case -1:
+            spdlog::warn("`inet_pton` failed: {}", std::strerror(errno));
+    }
+}
+
 class kodibot_app : private kodibot::bot::bot::hoster
                   , private kodibot::bot::bot::player
 {
@@ -340,11 +358,8 @@ private:
             file_id, size, info.mime_type, info.supports_streaming
         );
 
-        // NB: an IPv6 address must be enclosed in brackets to be used in a URL
-        const auto &address = m_http_server_public_address;
-        const auto host = address.contains(':') && !address.starts_with('[')
-            ? std::format("[{}]", address)
-            : address;
+        auto host = m_http_server_public_address;
+        prepare_host_address(host);
 
         return std::format("http://{}:{}/videos/{}", host, m_http_server_public_port, file_id);
     }
