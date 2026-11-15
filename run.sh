@@ -1,4 +1,4 @@
 #!/bin/bash
 
 export CREDENTIALS_DIRECTORY=.
-./build/src/kodibot.x
+exec ./build/src/kodibot.x
