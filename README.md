@@ -9,6 +9,7 @@ https://github.com/user-attachments/assets/fef4d32d-eff1-46c2-94fb-4693ed29d34d
 - [Setup](#setup)
   - [Obtaining Credentials](#obtaining-credentials)
   - [Installation](#installation)
+- [Usage](#usage)
 - [Security Notes](#security-notes)
 - [How It Works Internally](#how-it-works-internally)
 - [How to Support the Project](#how-to-support-the-project)
@@ -54,7 +55,7 @@ To use the Telegram Bot API, you need to create an app on **my.telegram.org**:
 #### 3. Create a Telegram Bot with BotFather
 
 1. **Start BotFather:**
-   - Open Telegram and search for `@BotFather`
+   - Open Telegram and search for `@BotFather` or visit https://t.me/BotFather
    - Send `/start`
 2. **Create a New Bot:**
    - Send `/newbot`
@@ -142,9 +143,13 @@ Installation instructions are organized by platform below. Currently, only Linux
 
 - **Error: `creating container storage: not enough unused IDs in user namespace`**
 
-  You don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
+  If you have any running containers with `--userns=keep-id`, see [this article](https://github.com/podman-container-tools/podman/blob/aec2f54ec68905b13f872c6343061c9eae9dddb7/troubleshooting.md#43-podman-run---usernsauto-fails-with-error-creating-container-storage-not-enough-unused-ids-in-user-namespace).
 
-  You can allocate more by editing `/etc/subuid` and `/etc/subgid` and adding a line to both of these files like:
+  Otherwise, you don't have enough subuids/subgids available for Podman to create the container. See `man subuid` and `man subgid` for more information.
+
+  Each line in `/etc/subuid` and `/etc/subgid` has the format `<user name OR uid>:<start>:<count>`, and the third value, the count, may be too small for your use case. You need to increase it. The quadlet shipped with the bot only needs 2048 subuids/subgids, so make sure the count is at least that large.
+
+  You can allocate more by editing `/etc/subuid` and `/etc/subgid` and adding (or adjusting) a line in both of these files, for example:
 
   ```
   <YOUR_USERNAME_HERE>:524288:262144
@@ -160,6 +165,10 @@ Installation instructions are organized by platform below. Currently, only Linux
   ##### Steps
   ##### Troubleshooting
 -->
+
+## Usage
+
+Using kodibot is simple: just forward or send a video file to the bot in Telegram, and it will start playing on your Kodi instance.
 
 ## Security Notes
 
